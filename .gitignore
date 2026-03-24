@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Python
+.venv/
+
+# Editor
+.vscode/
+.kiro/
+
+# Debug logs
+npm-debug.*
+
+# iOS signing & certs
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Xcode
+ios/build/
+*.xcuserstate
+xcuserdata/
+
+# SQLite databases & WAL files
+*.db
+*.db-shm
+*.db-wal
+
+# OS files
+.DS_Store
+*.orig.*

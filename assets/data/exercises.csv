@@ -1,0 +1,16 @@
+original_exercise_name,original_equipment,standardized_exercise_name,original_categories,standardized_equipment,is_bodyweight_only,notes,categories
+Barbell Bench Press,Barbell,Barbell Bench Press,Chest,Barbell,FALSE,,Chest
+Barbell Squat,Barbell,Barbell Squat,Legs,Barbell,FALSE,,Legs
+Deadlift,Barbell,Deadlift,Back,Barbell,FALSE,,Back
+Pull-ups,Bodyweight,Pull-ups,Back,Bodyweight,TRUE,,Back
+Dumbbell Shoulder Press,Dumbbell,Dumbbell Shoulder Press,Shoulders,Dumbbell,FALSE,,Shoulders
+Barbell Rows,Barbell,Barbell Rows,Back,Barbell,FALSE,,Back
+Leg Press,Machine,Leg Press,Legs,Machine,FALSE,,Legs
+Dumbbell Bicep Curl,Dumbbell,Dumbbell Bicep Curl,Arms,Dumbbell,FALSE,,Arms
+Tricep Dips,Bodyweight,Tricep Dips,Arms,Bodyweight,TRUE,,Arms
+Lat Pulldown,Machine,Lat Pulldown,Back,Machine,FALSE,,Back
+Incline Dumbbell Press,Dumbbell,Incline Dumbbell Press,Chest,Dumbbell,FALSE,,Chest
+Leg Curl,Machine,Leg Curl,Legs,Machine,FALSE,,Legs
+Cable Flyes,Cable,Cable Flyes,Chest,Cable,FALSE,,Chest
+Romanian Deadlift,Barbell,Romanian Deadlift,Legs,Barbell,FALSE,,Legs
+Overhead Press,Barbell,Overhead Press,Shoulders,Barbell,FALSE,,Shoulders
