@@ -1,0 +1,47 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "info": {
+      "en-US": {
+        "title": "GymTracker - Workout Log",
+        "subtitle": "Track workouts, sets & progress",
+        "description": "GymTracker is a simple, focused workout logging app built for lifters who want to track their training without the clutter.\n\nFeatures:\n- Log workouts from templates or freestyle\n- Track sets, reps, and weight for every exercise\n- Automatic personal record detection\n- Smart progression recommendations based on your performance\n- View workout history and export data\n- Progress charts per exercise\n- Support for supersets, drop sets, warmup sets\n- Counterweight exercise support (e.g. assisted pull-ups)\n- Built-in rest timer\n- Multiple gym profiles with equipment tracking\n- Dark theme throughout\n\nNo account required. All data stays on your device.",
+        "keywords": "gym,workout,tracker,fitness,weightlifting,exercise,log,training,strength,progress",
+        "promotionalText": "Track your lifts. See your progress. Get smarter recommendations.",
+        "whatsNew": "Initial release."
+      }
+    },
+    "categories": ["HEALTH_AND_FITNESS", "LIFESTYLE"],
+    "copyright": "2026 GymTracker",
+    "primaryLocale": "en-UK",
+    "contentRights": "DOES_NOT_USE_THIRD_PARTY_CONTENT",
+    "ageRating": {
+      "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+      "contests": "NONE",
+      "gamblingSimulated": "NONE",
+      "horrorOrFearThemes": "NONE",
+      "matureOrSuggestiveThemes": "NONE",
+      "medicalOrTreatmentInformation": "NONE",
+      "profanityOrCrudeHumor": "NONE",
+      "sexualContentGraphicAndNudity": "NONE",
+      "sexualContentOrNudity": "NONE",
+      "violenceCartoonOrFantasy": "NONE",
+      "violenceRealistic": "NONE",
+      "violenceRealisticProlonged": "NONE",
+      "gambling": false,
+      "unrestrictedWebAccess": false,
+      "kidsAgeBand": null,
+      "seventeenPlus": false
+    },
+    "appPrivacy": {
+      "privacyPolicyUrl": "[your-privacy-policy-url]"
+    },
+    "reviewInformation": {
+      "firstName": "Kate",
+      "lastName": "Gawron",
+      "email": "gymtracker@katehollow.co.uk",
+      "phone": "+447709363174",
+      "notes": "This app works entirely offline. No login required. Launch the app, select or create a workout template, and start logging sets. All data is stored locally on device using SQLite."
+    }
+  }
+}

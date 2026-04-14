@@ -41,6 +41,8 @@ export default function WorkoutHistory() {
 
   const [editing, setEditing] = useState(false);
   const [editSets, setEditSets] = useState<SetDetail[]>([]);
+  const [editName, setEditName] = useState('');
+  const [editDuration, setEditDuration] = useState('');
 
   const openWorkoutDetail = (log: WorkoutLog) => {
     const sets = db.getAllSync<SetDetail>(`
@@ -62,8 +64,18 @@ export default function WorkoutHistory() {
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive', onPress: () => {
+          // Clean up recs for exercises that will lose all data
+          const delExIds = db.getAllSync<{ exerciseId: number }>(
+            'SELECT DISTINCT exercise_id as exerciseId FROM set_logs WHERE workout_log_id = ?', [logId]
+          );
           db.runSync('DELETE FROM set_logs WHERE workout_log_id = ?', [logId]);
           db.runSync('DELETE FROM personal_records WHERE workout_log_id = ?', [logId]);
+          for (const { exerciseId } of delExIds) {
+            const remaining = db.getFirstSync<{ c: number }>('SELECT COUNT(*) as c FROM set_logs WHERE exercise_id = ?', [exerciseId]);
+            if (!remaining || remaining.c === 0) {
+              db.runSync('DELETE FROM progression_recommendations WHERE exercise_id = ?', [exerciseId]);
+            }
+          }
           db.runSync('DELETE FROM workout_logs WHERE id = ?', [logId]);
           setSelectedLog(null);
           setEditing(false);
@@ -75,6 +87,8 @@ export default function WorkoutHistory() {
 
   const startEditing = () => {
     setEditSets(setDetails.map(s => ({ ...s })));
+    setEditName(selectedLog?.templateName || 'Freestyle Workout');
+    setEditDuration(String(selectedLog?.duration ?? 0));
     setEditing(true);
   };
 
@@ -86,8 +100,25 @@ export default function WorkoutHistory() {
     for (const s of editSets) {
       db.runSync('UPDATE set_logs SET reps = ?, weight = ? WHERE id = ?', [s.reps, s.weight, s.id]);
     }
+    if (selectedLog) {
+      const newDuration = parseInt(editDuration) || 0;
+      db.runSync('UPDATE workout_logs SET duration = ? WHERE id = ?', [newDuration, selectedLog.id]);
+      // Update template name if it changed and has a template
+      if (selectedLog.templateId && editName !== selectedLog.templateName) {
+        db.runSync('UPDATE workout_templates SET name = ? WHERE id = ?', [editName, selectedLog.templateId]);
+      }
+      // Store custom name for freestyle workouts via user_settings
+      if (!selectedLog.templateId && editName !== 'Freestyle Workout') {
+        db.runSync(
+          "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, ?)",
+          [`workout_name_${selectedLog.id}`, editName]
+        );
+      }
+      setSelectedLog({ ...selectedLog, templateName: editName, duration: newDuration });
+    }
     setSetDetails(editSets);
     setEditing(false);
+    loadLogs();
   };
 
   const cancelEditing = () => {
@@ -161,8 +192,34 @@ export default function WorkoutHistory() {
               <Icon name="chevronLeft" size={24} color="#fff" />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
-              <Text style={styles.modalTitle}>{selectedLog?.templateName || 'Freestyle Workout'}</Text>
-              <Text style={styles.modalSubtitle}>{selectedLog?.date} • {selectedLog?.duration} min • {Math.round(totalVolume / 1000 * 10) / 10}t volume</Text>
+              {editing ? (
+                <>
+                  <TextInput
+                    style={styles.editNameInput}
+                    value={editName}
+                    onChangeText={setEditName}
+                    placeholder="Workout name"
+                    placeholderTextColor="#6B7280"
+                  />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 4 }}>
+                    <Text style={styles.modalSubtitle}>{selectedLog?.date} •</Text>
+                    <TextInput
+                      style={styles.editDurationInput}
+                      value={editDuration}
+                      onChangeText={setEditDuration}
+                      keyboardType="number-pad"
+                      placeholder="0"
+                      placeholderTextColor="#6B7280"
+                    />
+                    <Text style={styles.modalSubtitle}>min</Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.modalTitle}>{selectedLog?.templateName || 'Freestyle Workout'}</Text>
+                  <Text style={styles.modalSubtitle}>{selectedLog?.date} • {selectedLog?.duration} min • {Math.round(totalVolume / 1000 * 10) / 10}t volume</Text>
+                </>
+              )}
             </View>
             {editing ? (
               <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -240,7 +297,7 @@ export default function WorkoutHistory() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111827', padding: 16 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   title: { fontSize: 28, fontWeight: 'bold', color: '#fff' },
   exportButton: { backgroundColor: '#3B82F6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   calendarButton: { backgroundColor: '#3B82F6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
@@ -253,12 +310,12 @@ const styles = StyleSheet.create({
   duration: { fontSize: 14, color: '#9CA3AF' },
   modalContainer: { flex: 1, backgroundColor: '#111827' },
   modalHeader: { flexDirection: 'row', alignItems: 'flex-start', padding: 16, paddingTop: 60, borderBottomWidth: 1, borderBottomColor: '#374151', gap: 12 },
-  modalTitle: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
+  modalTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
   modalSubtitle: { fontSize: 13, color: '#9CA3AF', marginTop: 4 },
   backButton: { paddingTop: 2 },
   modalScroll: { flex: 1, padding: 16 },
   exerciseBlock: { backgroundColor: '#1F2937', borderRadius: 12, padding: 14, marginBottom: 12 },
-  exerciseTitle: { fontSize: 16, fontWeight: '600', color: '#fff', marginBottom: 10 },
+  exerciseTitle: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 10 },
   setHeaderRow: { flexDirection: 'row', marginBottom: 6, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: '#374151' },
   setHeaderText: { flex: 1, color: '#6B7280', fontSize: 12, fontWeight: '600' },
   setRow: { flexDirection: 'row', paddingVertical: 6 },
@@ -276,4 +333,6 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   cancelEditText: { color: '#9CA3AF', fontSize: 14, paddingVertical: 6 },
   editInput: { flex: 1, color: '#fff', fontSize: 14, backgroundColor: '#374151', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, textAlign: 'center' },
+  editNameInput: { color: '#fff', fontSize: 20, fontWeight: 'bold', backgroundColor: '#374151', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  editDurationInput: { color: '#fff', fontSize: 13, backgroundColor: '#374151', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, width: 40, textAlign: 'center' },
 });

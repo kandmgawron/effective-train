@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import db from '@/lib/database';
 import { Exercise, TemplateExercise } from '@/types';
@@ -12,6 +12,7 @@ export default function EditTemplate() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [selectedExercises, setSelectedExercises] = useState<TemplateExercise[]>([]);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
+  const [exerciseSearch, setExerciseSearch] = useState('');
   const [editingExercise, setEditingExercise] = useState<TemplateExercise | null>(null);
   const [showSupersetPicker, setShowSupersetPicker] = useState(false);
   const [supersetSelection, setSupersetSelection] = useState<Set<number>>(new Set());
@@ -278,6 +279,23 @@ export default function EditTemplate() {
         >
           <Text style={styles.saveButtonText}>Save Template</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.deleteTemplateBtn}
+          onPress={() => {
+            Alert.alert('Delete Template', 'Are you sure? This will permanently delete this template.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Delete', style: 'destructive', onPress: () => {
+                db.runSync('DELETE FROM template_exercises WHERE template_id = ?', [id]);
+                db.runSync('DELETE FROM workout_templates WHERE id = ?', [id]);
+                router.back();
+                router.back();
+              }},
+            ]);
+          }}
+        >
+          <Text style={styles.deleteTemplateBtnText}>Delete Template</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {/* Exercise Picker Modal */}
@@ -285,12 +303,22 @@ export default function EditTemplate() {
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Select Exercise</Text>
-            <TouchableOpacity onPress={() => setShowExercisePicker(false)}>
+            <TouchableOpacity onPress={() => { setShowExercisePicker(false); setExerciseSearch(''); }}>
               <Icon name="chevronLeft" size={28} color="#fff" />
             </TouchableOpacity>
           </View>
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search exercises..."
+              placeholderTextColor="#6B7280"
+              value={exerciseSearch}
+              onChangeText={setExerciseSearch}
+              autoFocus
+            />
+          </View>
           <ScrollView style={styles.modalScroll}>
-            {exercises.map(ex => (
+            {exercises.filter(ex => !exerciseSearch || ex.name.toLowerCase().includes(exerciseSearch.toLowerCase()) || ex.bodyPart.toLowerCase().includes(exerciseSearch.toLowerCase())).map(ex => (
               <TouchableOpacity key={ex.id} style={styles.exerciseOption} onPress={() => handleAddExercise(ex)}>
                 <Text style={styles.exerciseOptionName}>{ex.name}</Text>
                 <Text style={styles.exerciseOptionMeta}>{ex.bodyPart} • {ex.equipment}</Text>
@@ -435,11 +463,14 @@ const styles = StyleSheet.create({
   saveButton: { backgroundColor: '#3B82F6', padding: 16, borderRadius: 12, marginTop: 16, marginBottom: 32 },
   saveButtonDisabled: { backgroundColor: '#374151', opacity: 0.5 },
   saveButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold', textAlign: 'center' },
+  deleteTemplateBtn: { backgroundColor: '#EF4444', padding: 14, borderRadius: 12, marginTop: 8, marginBottom: 40, alignItems: 'center' },
+  deleteTemplateBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   modalContainer: { flex: 1, backgroundColor: '#111827' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#374151' },
   modalTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
   closeButton: { fontSize: 40, color: '#fff', fontWeight: 'bold' },
   modalScroll: { flex: 1, padding: 16 },
+  searchInput: { backgroundColor: '#374151', color: '#fff', padding: 12, borderRadius: 8, fontSize: 16 },
   exerciseOption: { backgroundColor: '#1F2937', padding: 16, borderRadius: 12, marginBottom: 12 },
   exerciseOptionName: { fontSize: 16, fontWeight: '600', color: '#fff' },
   exerciseOptionMeta: { fontSize: 13, color: '#9CA3AF', marginTop: 4 },

@@ -7,17 +7,21 @@ export default function ExerciseLibrary() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [bodyParts, setBodyParts] = useState<string[]>([]);
   const [equipmentTypes, setEquipmentTypes] = useState<string[]>([]);
+  const [specificEquipmentTypes, setSpecificEquipmentTypes] = useState<string[]>([]);
+  const [customSpecificInput, setCustomSpecificInput] = useState('');
+  const [showCustomSpecific, setShowCustomSpecific] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBodyPart, setSelectedBodyPart] = useState('');
   const [selectedEquipment, setSelectedEquipment] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [editExercise, setEditExercise] = useState<{ id: number; name: string; bodyParts: string[]; equipment: string; instructions: string } | null>(null);
+  const [editExercise, setEditExercise] = useState<{ id: number; name: string; bodyParts: string[]; equipment: string; specificEquipment: string; instructions: string } | null>(null);
   const [newExercise, setNewExercise] = useState({
     name: '',
     bodyParts: [] as string[],
     equipment: '',
+    specificEquipment: '',
     instructions: ''
   });
   const [progressionConfig, setProgressionConfig] = useState<ExerciseProgressionConfig | null>(null);
@@ -72,6 +76,10 @@ export default function ExerciseLibrary() {
     setBodyParts(parts.map(p => p.body_part));
     const equip = db.getAllSync<{ equipment: string }>('SELECT DISTINCT equipment FROM exercises ORDER BY equipment');
     setEquipmentTypes(equip.map(e => e.equipment));
+    const specEquip = db.getAllSync<{ se: string }>(
+      "SELECT DISTINCT specific_equipment as se FROM exercises WHERE specific_equipment IS NOT NULL AND specific_equipment != '' ORDER BY specific_equipment"
+    );
+    setSpecificEquipmentTypes(specEquip.map(e => e.se));
   }, []);
 
   useEffect(() => {
@@ -111,12 +119,14 @@ export default function ExerciseLibrary() {
   const handleAddExercise = () => {
     if (!newExercise.name.trim() || newExercise.bodyParts.length === 0 || !newExercise.equipment) return;
     const bodyPartStr = newExercise.bodyParts.join(', ');
+    const { getSpecificEquipment } = require('@/lib/equipment-mapping');
+    const specific = newExercise.specificEquipment || getSpecificEquipment(newExercise.name, newExercise.equipment);
     db.runSync(
-      'INSERT INTO exercises (name, body_part, equipment, instructions, is_custom) VALUES (?, ?, ?, ?, 1)',
-      [newExercise.name, bodyPartStr, newExercise.equipment, newExercise.instructions]
+      'INSERT INTO exercises (name, body_part, equipment, instructions, is_custom, specific_equipment) VALUES (?, ?, ?, ?, 1, ?)',
+      [newExercise.name, bodyPartStr, newExercise.equipment, newExercise.instructions, specific]
     );
     setShowAddModal(false);
-    setNewExercise({ name: '', bodyParts: [], equipment: '', instructions: '' });
+    setNewExercise({ name: '', bodyParts: [], equipment: '', specificEquipment: '', instructions: '' });
     loadExercises();
   };
 
@@ -142,11 +152,15 @@ export default function ExerciseLibrary() {
   const openEditExercise = () => {
     if (!selectedExercise) return;
     const parts = selectedExercise.bodyPart.split(',').map(s => s.trim()).filter(Boolean);
+    const specEquip = db.getFirstSync<{ se: string }>(
+      'SELECT specific_equipment as se FROM exercises WHERE id = ?', [selectedExercise.id]
+    );
     setEditExercise({
       id: selectedExercise.id,
       name: selectedExercise.name,
       bodyParts: parts,
       equipment: selectedExercise.equipment,
+      specificEquipment: specEquip?.se || '',
       instructions: selectedExercise.instructions || '',
     });
   };
@@ -154,9 +168,11 @@ export default function ExerciseLibrary() {
   const handleSaveEditExercise = () => {
     if (!editExercise || !editExercise.name.trim() || editExercise.bodyParts.length === 0 || !editExercise.equipment) return;
     const bodyPartStr = editExercise.bodyParts.join(', ');
+    const { getSpecificEquipment } = require('@/lib/equipment-mapping');
+    const specific = editExercise.specificEquipment || getSpecificEquipment(editExercise.name, editExercise.equipment);
     db.runSync(
-      'UPDATE exercises SET name = ?, body_part = ?, equipment = ?, instructions = ? WHERE id = ?',
-      [editExercise.name, bodyPartStr, editExercise.equipment, editExercise.instructions, editExercise.id]
+      'UPDATE exercises SET name = ?, body_part = ?, equipment = ?, instructions = ?, specific_equipment = ? WHERE id = ?',
+      [editExercise.name, bodyPartStr, editExercise.equipment, editExercise.instructions, specific, editExercise.id]
     );
     setEditExercise(null);
     setSelectedExercise(null);
@@ -379,6 +395,54 @@ export default function ExerciseLibrary() {
                 ))}
               </View>
 
+              {newExercise.equipment && (
+                <>
+                  <Text style={styles.filterLabel}>Specific Equipment</Text>
+                  <View style={styles.chipWrap}>
+                    {specificEquipmentTypes.map(se => (
+                      <TouchableOpacity
+                        key={se}
+                        style={[styles.chip, newExercise.specificEquipment === se && styles.chipActive]}
+                        onPress={() => setNewExercise({ ...newExercise, specificEquipment: newExercise.specificEquipment === se ? '' : se })}
+                      >
+                        <Text style={[styles.chipText, newExercise.specificEquipment === se && styles.chipTextActive]}>{se}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {showCustomSpecific ? (
+                      <View style={{ flexDirection: 'row', gap: 6, width: '100%' }}>
+                        <TextInput
+                          style={[styles.input, { flex: 1, marginBottom: 0, paddingVertical: 8 }]}
+                          placeholder="Custom equipment"
+                          placeholderTextColor="#6B7280"
+                          value={customSpecificInput}
+                          onChangeText={setCustomSpecificInput}
+                          autoFocus
+                        />
+                        <TouchableOpacity style={styles.button} onPress={() => {
+                          if (customSpecificInput.trim()) {
+                            setNewExercise({ ...newExercise, specificEquipment: customSpecificInput.trim() });
+                            if (!specificEquipmentTypes.includes(customSpecificInput.trim())) {
+                              setSpecificEquipmentTypes(prev => [...prev, customSpecificInput.trim()].sort());
+                            }
+                            setCustomSpecificInput('');
+                            setShowCustomSpecific(false);
+                          }
+                        }}>
+                          <Text style={styles.buttonText}>Add</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={[styles.chip, { borderStyle: 'dashed', borderColor: '#6B7280', borderWidth: 1 }]}
+                        onPress={() => setShowCustomSpecific(true)}
+                      >
+                        <Text style={styles.chipText}>+ Custom</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </>
+              )}
+
               <TextInput
                 style={[styles.input, styles.textArea]}
                 placeholder="Instructions"
@@ -447,6 +511,54 @@ export default function ExerciseLibrary() {
                       </TouchableOpacity>
                     ))}
                   </View>
+
+                  {editExercise.equipment && (
+                    <>
+                      <Text style={styles.filterLabel}>Specific Equipment</Text>
+                      <View style={styles.chipWrap}>
+                        {specificEquipmentTypes.map(se => (
+                          <TouchableOpacity
+                            key={se}
+                            style={[styles.chip, editExercise.specificEquipment === se && styles.chipActive]}
+                            onPress={() => setEditExercise({ ...editExercise, specificEquipment: editExercise.specificEquipment === se ? '' : se })}
+                          >
+                            <Text style={[styles.chipText, editExercise.specificEquipment === se && styles.chipTextActive]}>{se}</Text>
+                          </TouchableOpacity>
+                        ))}
+                        {showCustomSpecific ? (
+                          <View style={{ flexDirection: 'row', gap: 6, width: '100%' }}>
+                            <TextInput
+                              style={[styles.input, { flex: 1, marginBottom: 0, paddingVertical: 8 }]}
+                              placeholder="Custom equipment"
+                              placeholderTextColor="#6B7280"
+                              value={customSpecificInput}
+                              onChangeText={setCustomSpecificInput}
+                              autoFocus
+                            />
+                            <TouchableOpacity style={styles.button} onPress={() => {
+                              if (customSpecificInput.trim()) {
+                                setEditExercise({ ...editExercise, specificEquipment: customSpecificInput.trim() });
+                                if (!specificEquipmentTypes.includes(customSpecificInput.trim())) {
+                                  setSpecificEquipmentTypes(prev => [...prev, customSpecificInput.trim()].sort());
+                                }
+                                setCustomSpecificInput('');
+                                setShowCustomSpecific(false);
+                              }
+                            }}>
+                              <Text style={styles.buttonText}>Add</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={[styles.chip, { borderStyle: 'dashed', borderColor: '#6B7280', borderWidth: 1 }]}
+                            onPress={() => setShowCustomSpecific(true)}
+                          >
+                            <Text style={styles.chipText}>+ Custom</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </>
+                  )}
 
                   <TextInput
                     style={[styles.input, styles.textArea]}

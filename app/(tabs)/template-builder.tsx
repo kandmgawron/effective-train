@@ -429,7 +429,7 @@ const styles = StyleSheet.create({
   editModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 16 },
   editModalContent: { backgroundColor: '#1F2937', padding: 24, borderRadius: 12 },
   modalButtons: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  button: { backgroundColor: '#3B82F6', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 8 },
+  button: { backgroundColor: '#3B82F6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   cancelButton: { backgroundColor: '#374151' },
   supersetPickerContent: { backgroundColor: '#1F2937', padding: 24, borderRadius: 12, maxHeight: '80%' },
   supersetPickerHint: { color: '#9CA3AF', fontSize: 13, marginBottom: 12 },

@@ -2,22 +2,12 @@ import { Stack, useRouter } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { TouchableOpacity } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import db, { initDatabase } from '@/lib/database';
-import { generateRecommendations } from '@/lib/recommendation-generator';
+import { initDatabase } from '@/lib/database';
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { WorkoutProvider } from '@/lib/workout-context';
 
 // Initialize database synchronously before rendering
 initDatabase();
-
-// One-time regen: regenerate recommendations from last workout only
-if ((db as any).__needsRecRegen) {
-  delete (db as any).__needsRecRegen;
-  const lastWorkout = db.getFirstSync<{ id: number }>('SELECT id FROM workout_logs ORDER BY date DESC, id DESC LIMIT 1');
-  if (lastWorkout) {
-    generateRecommendations(lastWorkout.id);
-  }
-}
 
 function InnerLayout() {
   const { colors } = useTheme();

@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import db from '@/lib/database';
-import { Exercise, ProgressData, ProgressiveSuggestion } from '@/types';
+import { Exercise, ProgressData } from '@/types';
 import { getEffectiveWeight, getLatestBodyweight } from '@/lib/effective-weight';
 import Icon from '@/components/Icon';
 import BackToTop from '@/components/BackToTop';
@@ -13,12 +13,14 @@ export default function Progress() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [selectedExercise, setSelectedExercise] = useState<number | null>(null);
   const [progressData, setProgressData] = useState<ProgressData[]>([]);
-  const [suggestion, setSuggestion] = useState<ProgressiveSuggestion | null>(null);
   const [stats, setStats] = useState<{ maxWeight: number; totalVolume: number; workoutCount: number; estimated1RM: number } | null>(null);
   const [chartTab, setChartTab] = useState<'1rm' | 'volume' | 'weight'>('1rm');
   const [workoutChartTab, setWorkoutChartTab] = useState<'volume' | 'duration' | 'sets'>('volume');
   const [workoutOverview, setWorkoutOverview] = useState<{ date: string; volume: number; duration: number; sets: number; exercises: number; templateName: string | null }[]>([]);
   const [workoutFilter, setWorkoutFilter] = useState<string | null>(null);
+  const [bodyPartFilter, setBodyPartFilter] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<'all' | '1m' | '3m' | '6m' | '1y'>('all');
+  const [showFilters, setShowFilters] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const graphsY = useRef(0);
   const [scrollY, setScrollY] = useState(0);
@@ -27,10 +29,10 @@ export default function Progress() {
     setScrollY(e.nativeEvent.contentOffset.y);
   };
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     loadExercisesWithData();
     loadWorkoutOverview();
-  }, []);
+  }, [dateRange]));
 
   useEffect(() => {
     if (exerciseIdParam) {
@@ -38,14 +40,21 @@ export default function Progress() {
     }
   }, [exerciseIdParam]);
 
+  const dateClause = dateRange === 'all' ? '' :
+    dateRange === '1m' ? "AND wl.date >= date('now', '-30 days')" :
+    dateRange === '3m' ? "AND wl.date >= date('now', '-90 days')" :
+    dateRange === '6m' ? "AND wl.date >= date('now', '-180 days')" :
+    "AND wl.date >= date('now', '-365 days')";
+
   const loadWorkoutOverview = () => {
     const bodyweight = getLatestBodyweight();
     const rows = db.getAllSync<{ id: number; date: string; duration: number | null; templateName: string | null }>(`
       SELECT wl.id, wl.date, wl.duration, wt.name as templateName
       FROM workout_logs wl
       LEFT JOIN workout_templates wt ON wl.template_id = wt.id
+      WHERE 1=1 ${dateClause}
       ORDER BY wl.date DESC
-      LIMIT 30
+      LIMIT 50
     `);
     const data = rows.map(row => {
       const sets = db.getAllSync<{ reps: number; weight: number; exerciseId: number }>(`
@@ -77,6 +86,8 @@ export default function Progress() {
              MAX(sl.weight) as maxWeight
       FROM exercises e
       JOIN set_logs sl ON e.id = sl.exercise_id
+      JOIN workout_logs wl ON sl.workout_log_id = wl.id
+      WHERE 1=1 ${dateClause}
       GROUP BY e.id
       ORDER BY workoutCount DESC, e.name
     `);
@@ -92,7 +103,7 @@ export default function Progress() {
         SELECT wl.date, sl.reps, sl.weight, sl.is_drop_set as isDrop
         FROM set_logs sl
         JOIN workout_logs wl ON sl.workout_log_id = wl.id
-        WHERE sl.exercise_id = ? AND sl.is_drop_set = 0
+        WHERE sl.exercise_id = ? AND sl.is_drop_set = 0 ${dateClause}
         ORDER BY wl.date DESC, sl.set_number
       `, [selectedExercise]);
 
@@ -126,64 +137,8 @@ export default function Progress() {
         const estimated1RM = Math.round(Math.max(...data.map(d => d.estimated1RM || 0)) * 10) / 10;
         setStats({ maxWeight, totalVolume, workoutCount: data.length, estimated1RM });
       }
-
-      const lastWorkout = db.getAllSync<{ set_number: number; reps: number; weight: number }>(`
-        SELECT sl.set_number, sl.reps, sl.weight
-        FROM set_logs sl
-        JOIN workout_logs wl ON sl.workout_log_id = wl.id
-        WHERE sl.exercise_id = ?
-        ORDER BY wl.date DESC, sl.set_number
-        LIMIT 20
-      `, [selectedExercise]);
-
-      const templateExercise = db.getFirstSync<{ target_reps: number; sets: number }>(
-        'SELECT target_reps, sets FROM template_exercises WHERE exercise_id = ? LIMIT 1',
-        [selectedExercise]
-      );
-
-      if (lastWorkout.length > 0 && templateExercise) {
-        const allHitTarget = lastWorkout.every(s => s.reps >= templateExercise.target_reps);
-        const currentWeight = lastWorkout[0]?.weight || 0;
-        const hasCounterweight = currentWeight < 0;
-
-        if (allHitTarget) {
-          if (hasCounterweight) {
-            // For counterweight: reduce assistance by 2.5kg (weight goes from e.g. -20 to -17.5)
-            const newWeight = currentWeight + 2.5;
-            const newEffective = getEffectiveWeight(newWeight, bodyweight);
-            setSuggestion({
-              type: 'increase_weight',
-              newWeight,
-              message: `You hit ${templateExercise.target_reps} reps on all sets. Reduce assistance to ${Math.abs(newWeight)}kg (effective: ${newEffective.toFixed(1)}kg).`
-            });
-          } else {
-            setSuggestion({
-              type: 'increase_weight',
-              newWeight: currentWeight + 2.5,
-              message: `You hit ${templateExercise.target_reps} reps on all sets. Try increasing to ${currentWeight + 2.5}kg next time.`
-            });
-          }
-        } else {
-          const avgReps = lastWorkout.reduce((sum, s) => sum + s.reps, 0) / lastWorkout.length;
-          if (avgReps >= templateExercise.target_reps * 0.8) {
-            setSuggestion({
-              type: 'add_drop_set',
-              message: hasCounterweight
-                ? `You're close to target. Keep at ${Math.abs(currentWeight)}kg assistance and push for more reps.`
-                : `You're close to target. Consider adding a drop set at ${(currentWeight * 0.7).toFixed(1)}kg to push harder.`
-            });
-          } else {
-            setSuggestion({
-              type: 'maintain',
-              message: `Keep working at ${currentWeight}kg until you consistently hit ${templateExercise.target_reps} reps on all sets.`
-            });
-          }
-        }
-      } else {
-        setSuggestion(null);
-      }
     }
-  }, [selectedExercise]);
+  }, [selectedExercise, dateRange]);
 
   const selectedExerciseData = exercises.find(e => e.id === selectedExercise);
 
@@ -211,15 +166,32 @@ export default function Progress() {
   // PR board data
   const [prFilter, setPrFilter] = useState<'all' | '3m' | '1m'>('all');
   const prDateClause = prFilter === '3m' ? "AND pr.date >= date('now', '-90 days')" : prFilter === '1m' ? "AND pr.date >= date('now', '-30 days')" : '';
+  const prWorkoutClause = (() => {
+    if (!workoutFilter) return '';
+    const templateRow = db.getFirstSync<{ id: number }>(
+      'SELECT id FROM workout_templates WHERE name = ?', [workoutFilter]
+    );
+    if (!templateRow) return '';
+    const exIds = db.getAllSync<{ exerciseId: number }>(
+      'SELECT exercise_id as exerciseId FROM template_exercises WHERE template_id = ?', [templateRow.id]
+    );
+    if (exIds.length === 0) return 'AND 1=0';
+    return `AND pr.exercise_id IN (${exIds.map(e => e.exerciseId).join(',')})`;
+  })();
+  const prGlobalDateClause = dateRange === 'all' ? '' :
+    dateRange === '1m' ? "AND pr.date >= date('now', '-30 days')" :
+    dateRange === '3m' ? "AND pr.date >= date('now', '-90 days')" :
+    dateRange === '6m' ? "AND pr.date >= date('now', '-180 days')" :
+    "AND pr.date >= date('now', '-365 days')";
   const personalRecords = !selectedExercise ? db.getAllSync<{ exerciseName: string; recordType: string; value: number; date: string }>(`
     SELECT e.name as exerciseName, pr.record_type as recordType, pr.value, pr.date
     FROM personal_records pr
     JOIN exercises e ON pr.exercise_id = e.id
     WHERE pr.id IN (
       SELECT pr2.id FROM personal_records pr2
-      WHERE pr2.exercise_id = pr.exercise_id AND pr2.record_type = pr.record_type ${prDateClause}
+      WHERE pr2.exercise_id = pr.exercise_id AND pr2.record_type = pr.record_type ${prDateClause} ${prGlobalDateClause}
       ORDER BY pr2.value DESC LIMIT 1
-    )
+    ) ${prWorkoutClause}
     ORDER BY e.name, pr.record_type
   `) : [];
 
@@ -231,18 +203,25 @@ export default function Progress() {
     ? workoutOverview.filter(w => w.templateName === workoutFilter)
     : workoutOverview;
 
-  // Filter exercises by selected workout template
+  // Filter exercises by selected workout template and body part
   const filteredExercises = (() => {
-    if (!workoutFilter) return exercises;
-    const templateRow = db.getFirstSync<{ id: number }>(
-      'SELECT id FROM workout_templates WHERE name = ?', [workoutFilter]
-    );
-    if (!templateRow) return exercises;
-    const templateExIds = db.getAllSync<{ exercise_id: number }>(
-      'SELECT DISTINCT exercise_id FROM template_exercises WHERE template_id = ?', [templateRow.id]
-    );
-    const idSet = new Set(templateExIds.map(r => r.exercise_id));
-    return exercises.filter(e => idSet.has(e.id));
+    let result = exercises;
+    if (workoutFilter) {
+      const templateRow = db.getFirstSync<{ id: number }>(
+        'SELECT id FROM workout_templates WHERE name = ?', [workoutFilter]
+      );
+      if (templateRow) {
+        const templateExIds = db.getAllSync<{ exercise_id: number }>(
+          'SELECT DISTINCT exercise_id FROM template_exercises WHERE template_id = ?', [templateRow.id]
+        );
+        const idSet = new Set(templateExIds.map(r => r.exercise_id));
+        result = result.filter(e => idSet.has(e.id));
+      }
+    }
+    if (bodyPartFilter) {
+      result = result.filter(e => e.bodyPart.toLowerCase().includes(bodyPartFilter.toLowerCase()));
+    }
+    return result;
   })();
 
   return (
@@ -253,33 +232,83 @@ export default function Progress() {
         {!selectedExercise ? (
           <>
             <Text style={styles.subtitle}>Select an exercise to view progress</Text>
-            {workoutNames.length > 0 && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterRowContent}>
-                <TouchableOpacity
-                  style={[styles.filterChip, !workoutFilter && styles.filterChipActive]}
-                  onPress={() => setWorkoutFilter(null)}
-                >
-                  <Text style={[styles.filterChipText, !workoutFilter && styles.filterChipTextActive]}>All</Text>
-                </TouchableOpacity>
-                {workoutNames.map(name => (
-                  <TouchableOpacity
-                    key={name}
-                    style={[styles.filterChip, workoutFilter === name && styles.filterChipActive]}
-                    onPress={() => setWorkoutFilter(workoutFilter === name ? null : name)}
-                  >
-                    <Text style={[styles.filterChipText, workoutFilter === name && styles.filterChipTextActive]}>{name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-            {workoutOverview.length >= 2 && (
+            <View style={styles.filterBar}>
               <TouchableOpacity
-                style={styles.graphsJumpBtn}
-                onPress={() => scrollRef.current?.scrollTo({ y: graphsY.current, animated: true })}
+                style={[styles.filterToggleBtn, showFilters && styles.filterToggleBtnActive]}
+                onPress={() => setShowFilters(!showFilters)}
               >
-                <Icon name="chart" size={16} color="#fff" />
-                <Text style={styles.graphsJumpBtnText}>Graphs</Text>
+                <Icon name="search" size={14} color={showFilters ? '#fff' : '#9CA3AF'} />
+                <Text style={[styles.filterToggleText, showFilters && styles.filterToggleTextActive]}>
+                  Filters{(workoutFilter || bodyPartFilter || dateRange !== 'all') ? ` (${[workoutFilter, bodyPartFilter, dateRange !== 'all' ? dateRange : null].filter(Boolean).length})` : ''}
+                </Text>
               </TouchableOpacity>
+              {workoutOverview.length >= 2 && (
+                <TouchableOpacity
+                  style={styles.graphsJumpBtn}
+                  onPress={() => scrollRef.current?.scrollTo({ y: graphsY.current, animated: true })}
+                >
+                  <Icon name="chart" size={14} color="#fff" />
+                  <Text style={styles.graphsJumpBtnText}>Graphs</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {showFilters && (
+              <View style={styles.filterBox}>
+                <Text style={styles.filterLabel}>Workout</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipRow}>
+                  <View style={styles.filterChipRowContent}>
+                    <TouchableOpacity
+                      style={[styles.filterChip, !workoutFilter && styles.filterChipActive]}
+                      onPress={() => setWorkoutFilter(null)}
+                    >
+                      <Text style={[styles.filterChipText, !workoutFilter && styles.filterChipTextActive]}>All</Text>
+                    </TouchableOpacity>
+                    {workoutNames.map(name => (
+                      <TouchableOpacity
+                        key={name}
+                        style={[styles.filterChip, workoutFilter === name && styles.filterChipActive]}
+                        onPress={() => setWorkoutFilter(workoutFilter === name ? null : name)}
+                      >
+                        <Text style={[styles.filterChipText, workoutFilter === name && styles.filterChipTextActive]}>{name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+                <Text style={styles.filterLabel}>Body Part</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipRow}>
+                  <View style={styles.filterChipRowContent}>
+                    <TouchableOpacity
+                      style={[styles.filterChip, !bodyPartFilter && styles.filterChipActive]}
+                      onPress={() => setBodyPartFilter(null)}
+                    >
+                      <Text style={[styles.filterChipText, !bodyPartFilter && styles.filterChipTextActive]}>All</Text>
+                    </TouchableOpacity>
+                    {[...new Set(exercises.map(e => e.bodyPart.split(',')[0].trim()))].sort().map(bp => (
+                      <TouchableOpacity
+                        key={bp}
+                        style={[styles.filterChip, bodyPartFilter === bp && styles.filterChipActive]}
+                        onPress={() => setBodyPartFilter(bodyPartFilter === bp ? null : bp)}
+                      >
+                        <Text style={[styles.filterChipText, bodyPartFilter === bp && styles.filterChipTextActive]}>{bp}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+                <Text style={styles.filterLabel}>Date Range</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipRow}>
+                  <View style={styles.filterChipRowContent}>
+                    {([['all', 'All Time'], ['1m', '1 Month'], ['3m', '3 Months'], ['6m', '6 Months'], ['1y', '1 Year']] as const).map(([key, label]) => (
+                      <TouchableOpacity
+                        key={key}
+                        style={[styles.filterChip, dateRange === key && styles.filterChipActive]}
+                        onPress={() => setDateRange(key)}
+                      >
+                        <Text style={[styles.filterChipText, dateRange === key && styles.filterChipTextActive]}>{label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
             )}
             {filteredExercises.length === 0 ? (
               <View style={styles.emptyState}>
@@ -444,7 +473,7 @@ export default function Progress() {
         ) : (
           <>
             <TouchableOpacity style={styles.backButton} onPress={() => setSelectedExercise(null)}>
-              <Text style={styles.backButtonText}>← Back to Exercises</Text>
+              <Icon name="chevronLeft" size={24} color="#fff" />
             </TouchableOpacity>
 
             <Text style={styles.exerciseTitle}>{selectedExerciseData?.name}</Text>
@@ -514,20 +543,6 @@ export default function Progress() {
               </View>
             )}
 
-            {suggestion && (
-              <View style={[
-                styles.suggestionBox,
-                suggestion.type === 'increase_weight' && styles.suggestionSuccess,
-                suggestion.type === 'add_drop_set' && styles.suggestionWarning
-              ]}>
-                <Text style={styles.suggestionTitle}>
-                  {suggestion.type === 'increase_weight' ? 'Progressive Overload' :
-                   suggestion.type === 'add_drop_set' ? 'Push Harder' : 'Keep Going'}
-                </Text>
-                <Text style={styles.suggestionText}>{suggestion.message}</Text>
-              </View>
-            )}
-
             <View style={styles.historySection}>
               <Text style={styles.sectionTitle}>Recent Workouts</Text>
               {progressData.map((data, index) => (
@@ -574,21 +589,15 @@ const styles = StyleSheet.create({
   stat: { alignItems: 'center' },
   statValue: { fontSize: 20, fontWeight: 'bold', color: '#3B82F6' },
   statLabel: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
-  backButton: { marginBottom: 16 },
-  backButtonText: { color: '#3B82F6', fontSize: 16 },
-  exerciseTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
+  backButton: { marginBottom: 8, paddingVertical: 4 },
+  exerciseTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
   exerciseSubtitle: { fontSize: 14, color: '#9CA3AF', marginBottom: 24 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
   statCard: { width: '47%', backgroundColor: '#1F2937', padding: 16, borderRadius: 12, alignItems: 'center' },
   statCardValue: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
   statCardLabel: { fontSize: 12, color: '#9CA3AF' },
-  suggestionBox: { backgroundColor: '#1E3A8A', borderColor: '#3B82F6', borderWidth: 1, padding: 16, borderRadius: 12, marginBottom: 24 },
-  suggestionSuccess: { backgroundColor: '#1E3A8A', borderColor: '#3B82F6' },
-  suggestionWarning: { backgroundColor: '#78350F', borderColor: '#F59E0B' },
-  suggestionTitle: { fontWeight: '600', color: '#fff', marginBottom: 8, fontSize: 16 },
-  suggestionText: { color: '#D1D5DB', lineHeight: 20 },
   historySection: { marginBottom: 24 },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 12 },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12 },
   historyCard: { backgroundColor: '#1F2937', padding: 16, borderRadius: 12, marginBottom: 12 },
   historyDate: { fontSize: 16, fontWeight: '600', color: '#fff', marginBottom: 12 },
   historyStats: { flexDirection: 'row', gap: 24 },
@@ -608,20 +617,27 @@ const styles = StyleSheet.create({
   heatmapValue: { color: '#D1D5DB', fontSize: 11 },
   prBoardSection: { marginBottom: 24 },
   prFilterRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  prBoardCard: { backgroundColor: '#1F2937', borderRadius: 10, padding: 14, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#F59E0B' },
+  prBoardCard: { backgroundColor: '#1F2937', borderRadius: 12, padding: 14, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#F59E0B' },
   prBoardExercise: { fontSize: 16, fontWeight: '600', color: '#fff', marginBottom: 8 },
   prBoardRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   prBoardType: { flex: 1, fontSize: 13, color: '#D1D5DB' },
   prBoardValue: { fontSize: 14, fontWeight: 'bold', color: '#F59E0B', marginRight: 8 },
   prBoardDate: { fontSize: 11, color: '#6B7280' },
   workoutOverviewSection: { marginBottom: 24 },
-  filterRow: { marginBottom: 12, maxHeight: 40 },
-  filterRowContent: { gap: 8, paddingRight: 8 },
+  filterBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  filterToggleBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#374151', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, gap: 6 },
+  filterToggleBtnActive: { backgroundColor: '#1E3A8A' },
+  filterToggleText: { color: '#9CA3AF', fontSize: 14, fontWeight: '600' },
+  filterToggleTextActive: { color: '#fff' },
+  filterBox: { backgroundColor: '#1F2937', borderRadius: 12, padding: 14, marginBottom: 16 },
+  filterLabel: { color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 6, marginTop: 4 },
+  filterChipRow: { marginBottom: 8 },
+  filterChipRowContent: { flexDirection: 'row', gap: 8 },
   filterChip: { backgroundColor: '#374151', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
-  filterChipActive: { backgroundColor: '#F59E0B' },
+  filterChipActive: { backgroundColor: '#3B82F6' },
   filterChipText: { color: '#9CA3AF', fontSize: 13, fontWeight: '600' },
-  filterChipTextActive: { color: '#111827' },
-  graphsJumpBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#3B82F6', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, gap: 6, marginBottom: 16 },
+  filterChipTextActive: { color: '#fff' },
+  graphsJumpBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#3B82F6', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, gap: 6 },
   graphsJumpBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   noDataBox: { backgroundColor: '#1F2937', padding: 24, borderRadius: 12, alignItems: 'center' },
   noDataText: { color: '#6B7280', fontSize: 14 },

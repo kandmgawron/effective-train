@@ -5,12 +5,10 @@ import { format } from 'date-fns';
 
 /**
  * Derive rep range from a template's target_reps.
- * e.g. target 8 → range 6-8, target 12 → range 10-12, target 4 → range 3-5
+ * Min is 2/3 of target (e.g. target 12 → min 8, target 6 → min 4)
  */
 function deriveRepRange(targetReps: number): { min: number; max: number } {
-  if (targetReps <= 5) return { min: Math.max(1, targetReps - 1), max: targetReps + 1 };
-  if (targetReps <= 8) return { min: targetReps - 2, max: targetReps };
-  return { min: targetReps - 2, max: targetReps };
+  return { min: Math.max(1, Math.round(targetReps * 2 / 3)), max: targetReps };
 }
 
 /**
@@ -73,13 +71,18 @@ export function generateRecommendations(workoutLogId: number): void {
         [exerciseId, defaultIncrement, repMin, repMax, detectedType]
       );
     } else {
-      // Sync rep range if still on old defaults
-      const needsRepSync = config.repRangeMin === 8 && config.repRangeMax === 12 && (repMin !== 8 || repMax !== 12);
-      const needsTypeSync = (config.progressionType || 'reps') === 'reps' && detectedType !== 'reps';
-      if (needsRepSync || needsTypeSync) {
+      // Always sync rep range from current template
+      if (config.repRangeMin !== repMin || config.repRangeMax !== repMax) {
         db.runSync(
-          'UPDATE exercise_progression_config SET rep_range_min = ?, rep_range_max = ?, progression_type = ? WHERE id = ?',
-          [needsRepSync ? repMin : config.repRangeMin, needsRepSync ? repMax : config.repRangeMax, needsTypeSync ? detectedType : config.progressionType, config.id]
+          'UPDATE exercise_progression_config SET rep_range_min = ?, rep_range_max = ? WHERE id = ?',
+          [repMin, repMax, config.id]
+        );
+      }
+      const needsTypeSync = (config.progressionType || 'reps') === 'reps' && detectedType !== 'reps';
+      if (needsTypeSync) {
+        db.runSync(
+          'UPDATE exercise_progression_config SET progression_type = ? WHERE id = ?',
+          [detectedType, config.id]
         );
       }
     }

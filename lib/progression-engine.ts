@@ -19,7 +19,7 @@ type Result = {
  * Machines: +5kg up to 30kg, +7.5kg above.
  * Barbell/cable/other: +2.5kg up to 60kg, +5kg above.
  */
-function getSmartIncrement(currentWeight: number, equipment: string): number {
+export function getSmartIncrement(currentWeight: number, equipment: string): number {
   const w = Math.abs(currentWeight);
   const eq = equipment.toLowerCase();
 
@@ -38,7 +38,7 @@ function getSmartIncrement(currentWeight: number, equipment: string): number {
 }
 
 /** Round to nearest 0.5kg */
-function roundWeight(w: number): number {
+export function roundWeight(w: number): number {
   return Math.round(w * 2) / 2;
 }
 
@@ -52,7 +52,7 @@ function roundWeight(w: number): number {
  * - 4-5 reps → drop to 3
  * - 1-3 reps → stay the same
  */
-function getRepDropTarget(currentTargetReps: number): number {
+export function getRepDropTarget(currentTargetReps: number): number {
   if (currentTargetReps >= 12) return 8;
   if (currentTargetReps >= 10) return 7;
   if (currentTargetReps >= 8) return 6;

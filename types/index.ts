@@ -66,6 +66,7 @@ export interface ProgressData {
 export interface ProgressiveSuggestion {
   type: 'increase_weight' | 'add_drop_set' | 'maintain';
   newWeight?: number;
+  suggestedReps?: number;
   message: string;
 }
 

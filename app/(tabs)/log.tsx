@@ -6,9 +6,9 @@ import db from '@/lib/database';
 import { WorkoutTemplate, TemplateExercise, Exercise } from '@/types';
 import SetTimer from '@/components/SetTimer';
 import { detectPersonalRecords } from '@/lib/pr-detection';
-import { generateRecommendations } from '@/lib/recommendation-generator';
 import { isCounterweight } from '@/lib/effective-weight';
 import { useWorkout, formatElapsed } from '@/lib/workout-context';
+import { getCoreMovement } from '@/lib/exercise-name-fixer';
 import Icon from '@/components/Icon';
 
 interface SetEntry {
@@ -42,14 +42,17 @@ export default function LogWorkout() {
   const [isFreestyle, setIsFreestyle] = useState(false);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
   const [allExercisesForPicker, setAllExercisesForPicker] = useState<Exercise[]>([]);
-  const [preWorkoutRecs, setPreWorkoutRecs] = useState<{ type: string; message: string; exerciseName: string }[]>([]);
+  const [exerciseSearch, setExerciseSearch] = useState('');
   const [exerciseNotes, setExerciseNotes] = useState<Record<number, string>>({});
   const [showExerciseNotes, setShowExerciseNotes] = useState<Record<number, boolean>>({});
   const [expandedMenu, setExpandedMenu] = useState<Record<number, boolean>>({});
   const [expandedInstructions, setExpandedInstructions] = useState<Record<number, boolean>>({});
   const [logMode, setLogMode] = useState<'active' | 'quick' | null>(null);
   const [nextSupersetId, setNextSupersetId] = useState(1);
-  const { workoutMode, setWorkoutMode, elapsedSeconds } = useWorkout();
+  const [gymProfiles, setGymProfiles] = useState<{ id: number; name: string; isActive: number }[]>([]);
+  const [equipConflicts, setEquipConflicts] = useState<{ exerciseId: number; exerciseName: string; equipment: string; suggestion: { id: number; name: string; equipment: string } | null }[]>([]);
+  const [pendingWorkout, setPendingWorkout] = useState<{ templateId: number; mode: 'active' | 'quick' } | null>(null);
+  const { workoutMode, setWorkoutMode, elapsedSeconds, paused, togglePause } = useWorkout();
   const router = useRouter();
 
   useFocusEffect(
@@ -65,6 +68,110 @@ export default function LogWorkout() {
       'SELECT id, name, estimated_duration as estimatedDuration FROM workout_templates'
     );
     setTemplates(result);
+    const gp = db.getAllSync<{ id: number; name: string; isActive: number }>(
+      'SELECT id, name, is_active as isActive FROM gym_profiles'
+    );
+    setGymProfiles(gp);
+  };
+
+  const switchGymProfile = (id: number) => {
+    db.runSync('UPDATE gym_profiles SET is_active = 0');
+    db.runSync('UPDATE gym_profiles SET is_active = 1 WHERE id = ?', [id]);
+    setGymProfiles(prev => prev.map(p => ({ ...p, isActive: p.id === id ? 1 : 0 })));
+  };
+
+  const checkEquipmentConflicts = (templateId: number): typeof equipConflicts => {
+    const activeProfile = db.getFirstSync<{ id: number; equipment: string }>(
+      'SELECT id, equipment FROM gym_profiles WHERE is_active = 1 LIMIT 1'
+    );
+    if (!activeProfile) return [];
+    const gymEquip: string[] = JSON.parse(activeProfile.equipment);
+    if (gymEquip.length === 0) return []; // empty profile = no restrictions
+
+    const gymEquipLower = new Set(gymEquip.map(e => e.toLowerCase()));
+
+    // Adjustable bench covers flat, incline, decline, and seated bench variants
+    const hasAdjustableBench = gymEquipLower.has('adjustable bench');
+    const benchVariants = new Set(['flat bench', 'incline bench', 'decline bench', 'adjustable bench', 'preacher curl bench']);
+
+    const templateExs = db.getAllSync<{ exerciseId: number; exerciseName: string; bodyPart: string; specificEquipment: string | null }>(
+      `SELECT te.exercise_id as exerciseId, e.name as exerciseName, e.body_part as bodyPart,
+              e.specific_equipment as specificEquipment
+       FROM template_exercises te
+       JOIN exercises e ON te.exercise_id = e.id
+       WHERE te.template_id = ?
+       ORDER BY te.exercise_order`,
+      [templateId]
+    );
+
+    const conflicts: typeof equipConflicts = [];
+    // Track exercise IDs already in the template + already suggested as swaps
+    const usedExerciseIds = new Set(templateExs.map(e => e.exerciseId));
+    const suggestedIds = new Set<number>();
+
+    for (const ex of templateExs) {
+      if (!ex.specificEquipment) continue;
+      // Skip bodyweight / generic stuff that doesn't need gym equipment
+      const skipTypes = ['bodyweight', 'dumbbells', 'barbell', 'kettlebells', 'resistance bands', 'exercise ball', 'foam roller', 'medicine ball', 'bosu ball'];
+      if (skipTypes.some(s => ex.specificEquipment!.toLowerCase() === s)) continue;
+
+      const specLower = ex.specificEquipment.toLowerCase();
+
+      // Adjustable bench covers all bench variants
+      if (hasAdjustableBench && benchVariants.has(specLower)) continue;
+
+      if (!gymEquipLower.has(specLower)) {
+        // Find a swap: same body part, equipment available at this gym
+        // Score by body part match + movement similarity
+        const swaps = db.getAllSync<{ id: number; name: string; specificEquipment: string; bodyPart: string }>(
+          `SELECT id, name, specific_equipment as specificEquipment, body_part as bodyPart FROM exercises
+           WHERE id != ? AND specific_equipment IS NOT NULL
+           AND LOWER(specific_equipment) IN (${gymEquip.map(() => '?').join(',')})
+           ORDER BY name`,
+          [ex.exerciseId, ...gymEquip.map(e => e.toLowerCase())]
+        );
+        // Score each candidate — exclude already used or suggested exercises
+        const exCore = getCoreMovement(ex.exerciseName);
+        let bestSwap: { id: number; name: string; equipment: string } | null = null;
+        let bestScore = -1;
+        for (const s of swaps) {
+          if (usedExerciseIds.has(s.id) || suggestedIds.has(s.id)) continue;
+          let score = 0;
+
+          // Same primary body part (required)
+          const exBodyLower = ex.bodyPart.toLowerCase().split(',')[0].trim();
+          const candBodyLower = s.bodyPart.toLowerCase().split(',')[0].trim();
+          if (candBodyLower === exBodyLower) score += 10;
+          else if (s.bodyPart.toLowerCase().includes(exBodyLower)) score += 5;
+          else continue;
+
+          // Core movement match (strongest signal after body part)
+          const candCore = getCoreMovement(s.name);
+          if (exCore && candCore && exCore === candCore) score += 15;
+
+          // Word overlap in exercise names
+          const exWords = new Set(ex.exerciseName.toLowerCase().split(/[\s\-\/]+/).filter(w => w.length > 2));
+          const candWordSet = new Set(s.name.toLowerCase().split(/[\s\-\/]+/).filter(w => w.length > 2));
+          let wordOverlap = 0;
+          for (const w of exWords) { if (candWordSet.has(w)) wordOverlap++; }
+          score += wordOverlap * 3;
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestSwap = { id: s.id, name: s.name, equipment: s.specificEquipment };
+          }
+        }
+        const finalSwap = bestScore >= 10 ? bestSwap : null;
+        if (finalSwap) suggestedIds.add(finalSwap.id);
+        conflicts.push({
+          exerciseId: ex.exerciseId,
+          exerciseName: ex.exerciseName,
+          equipment: ex.specificEquipment,
+          suggestion: finalSwap,
+        });
+      }
+    }
+    return conflicts;
   };
 
   const getLastSets = (exerciseId: number): { reps: number; weight: number }[] => {
@@ -134,6 +241,31 @@ export default function LogWorkout() {
   }, []);
 
   const handleSelectTemplate = (templateId: number, mode: 'active' | 'quick') => {
+    // Check for a saved gym variant (previously accepted swaps for this gym+template)
+    const activeGym = gymProfiles.find(g => g.isActive === 1);
+    if (activeGym) {
+      const variantKey = `gym_variant_${activeGym.id}_${templateId}`;
+      const saved = db.getFirstSync<{ value: string }>(
+        "SELECT value FROM user_settings WHERE key = ?", [variantKey]
+      );
+      if (saved) {
+        const savedSwaps: Record<number, number> = JSON.parse(saved.value);
+        startWorkout(templateId, mode, savedSwaps);
+        return;
+      }
+    }
+
+    // Check equipment conflicts for non-default profiles
+    const conflicts = checkEquipmentConflicts(templateId);
+    if (conflicts.length > 0) {
+      setEquipConflicts(conflicts);
+      setPendingWorkout({ templateId, mode });
+      return;
+    }
+    startWorkout(templateId, mode);
+  };
+
+  const startWorkout = (templateId: number, mode: 'active' | 'quick', swaps?: Record<number, number>) => {
     setSelectedTemplate(templateId);
     setWorkoutStartTime(Date.now());
     setIsFreestyle(false);
@@ -153,28 +285,26 @@ export default function LogWorkout() {
       ORDER BY te.exercise_order
     `, [templateId]);
 
-    setExercises(result);
-    setSets(buildSets(result));
+    // Apply any accepted swaps
+    const finalResult = swaps ? result.map((ex: any) => {
+      const swapId = swaps[ex.exerciseId];
+      if (!swapId) return ex;
+      const swapEx = db.getFirstSync<any>(
+        `SELECT id, name, body_part as bodyPart, equipment, instructions, COALESCE(exercise_type, 'standard') as exerciseType
+         FROM exercises WHERE id = ?`, [swapId]
+      );
+      if (!swapEx) return ex;
+      return { ...ex, exerciseId: swapEx.id, exerciseName: swapEx.name, bodyPart: swapEx.bodyPart, equipment: swapEx.equipment, instructions: swapEx.instructions, exerciseType: swapEx.exerciseType };
+    }) : result;
+
+    setExercises(finalResult);
+    setSets(buildSets(finalResult));
 
     const logResult = db.runSync(
       'INSERT INTO workout_logs (template_id, date, duration) VALUES (?, ?, 0)',
       [templateId, format(new Date(), 'yyyy-MM-dd')]
     );
     setWorkoutLogId(Number(logResult.lastInsertRowId));
-
-    // Load pre-workout recommendations for exercises in this template
-    const exerciseIds = result.map((e: any) => e.exerciseId);
-    if (exerciseIds.length > 0) {
-      const placeholders = exerciseIds.map(() => '?').join(',');
-      const recs = db.getAllSync<any>(
-        `SELECT pr.type, pr.message, e.name as exerciseName
-         FROM progression_recommendations pr
-         JOIN exercises e ON pr.exercise_id = e.id
-         WHERE pr.status = 'active' AND pr.exercise_id IN (${placeholders})`,
-        exerciseIds
-      );
-      setPreWorkoutRecs(recs);
-    }
   };
 
   const startFreestyle = (mode: 'active' | 'quick') => {
@@ -453,8 +583,31 @@ export default function LogWorkout() {
     const date = format(new Date(), 'yyyy-MM-dd');
     detectPersonalRecords(workoutLogId, date);
 
-    // Generate progression recommendations
-    generateRecommendations(workoutLogId);
+    // Auto-populate active gym profile with equipment from this workout
+    const activeProfile = db.getFirstSync<{ id: number; equipment: string }>(
+      'SELECT id, equipment FROM gym_profiles WHERE is_active = 1 LIMIT 1'
+    );
+    if (activeProfile) {
+      const currentEquipment: string[] = JSON.parse(activeProfile.equipment);
+      const workoutEquipment = db.getAllSync<{ equipment: string }>(
+        `SELECT DISTINCT e.specific_equipment as equipment FROM set_logs sl
+         JOIN exercises e ON sl.exercise_id = e.id
+         WHERE sl.workout_log_id = ? AND e.specific_equipment IS NOT NULL AND e.specific_equipment != ''`,
+        [workoutLogId]
+      );
+      const currentSet = new Set(currentEquipment.map(e => e.toLowerCase()));
+      let updated = false;
+      for (const { equipment } of workoutEquipment) {
+        if (equipment && !currentSet.has(equipment.toLowerCase())) {
+          currentEquipment.push(equipment);
+          currentSet.add(equipment.toLowerCase());
+          updated = true;
+        }
+      }
+      if (updated) {
+        db.runSync('UPDATE gym_profiles SET equipment = ? WHERE id = ?', [JSON.stringify(currentEquipment), activeProfile.id]);
+      }
+    }
 
     // Reset state and navigate to insights
     setSelectedTemplate(null);
@@ -464,7 +617,6 @@ export default function LogWorkout() {
     setWorkoutStartTime(null);
     setHideCompleted(false);
     setIsFreestyle(false);
-    setPreWorkoutRecs([]);
     setExerciseNotes({});
     setShowExerciseNotes({});
     setExpandedMenu({});
@@ -490,7 +642,6 @@ export default function LogWorkout() {
     setWorkoutStartTime(null);
     setHideCompleted(false);
     setIsFreestyle(false);
-    setPreWorkoutRecs([]);
     setExerciseNotes({});
     setShowExerciseNotes({});
     setExpandedMenu({});
@@ -516,14 +667,21 @@ export default function LogWorkout() {
       "SELECT id, name, body_part as bodyPart, equipment, instructions, is_custom as isCustom, COALESCE(exercise_type, 'standard') as exerciseType FROM exercises ORDER BY name"
     );
 
-    // Score and sort: same body part (+3), same equipment (+2), equipment in gym profile (+1)
+    // Score and sort by body part, core movement, equipment, and name similarity
+    const currentCore = getCoreMovement(currentEx.exerciseName);
+    const currentWords = new Set(currentEx.exerciseName.toLowerCase().split(/[\s\-\/]+/).filter(w => w.length > 2));
     const scored = all
       .filter(ex => ex.id !== currentEx.exerciseId)
       .map(ex => {
         let score = 0;
-        if (ex.bodyPart.toLowerCase() === currentEx.bodyPart.toLowerCase()) score += 3;
+        if (ex.bodyPart.toLowerCase() === currentEx.bodyPart.toLowerCase()) score += 5;
+        const candCore = getCoreMovement(ex.name);
+        if (currentCore && candCore && currentCore === candCore) score += 10;
         if (ex.equipment.toLowerCase() === currentEx.equipment.toLowerCase()) score += 2;
         if (profileEquipment.some(eq => eq.toLowerCase() === ex.equipment.toLowerCase())) score += 1;
+        // Word overlap
+        const candWords = new Set(ex.name.toLowerCase().split(/[\s\-\/]+/).filter(w => w.length > 2));
+        for (const w of currentWords) { if (candWords.has(w)) score += 2; }
         return { ...ex, score };
       })
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
@@ -568,14 +726,13 @@ export default function LogWorkout() {
 
   const completedCount = sets.filter(s => s.status !== 'pending').length;
   const totalSets = sets.length;
-  const displaySets = hideCompleted ? sets.filter(s => s.status === 'pending') : sets;
+  // Group sets by exercise for display — track original index in sets array
+  const indexedSets = sets.map((s, i) => ({ ...s, globalIdx: i }));
+  const displaySets = hideCompleted ? indexedSets.filter(s => s.status === 'pending') : indexedSets;
 
-  // Group sets by exercise for display
   const groupedSets: { exercise: TemplateExercise; sets: (SetEntry & { globalIdx: number })[] }[] = [];
   exercises.forEach((ex, exIdx) => {
-    const exSets = displaySets
-      .map((s, i) => ({ ...s, globalIdx: sets.indexOf(s) }))
-      .filter(s => s.exerciseIndex === exIdx);
+    const exSets = displaySets.filter(s => s.exerciseIndex === exIdx);
     if (exSets.length > 0) {
       groupedSets.push({ exercise: ex, sets: exSets });
     }
@@ -668,26 +825,24 @@ export default function LogWorkout() {
             ) : set.exerciseType === 'time' ? (
               <>
                 <TextInput
-                  style={[styles.setInput, set.status !== 'pending' && styles.inputDisabled]}
+                  style={[styles.setInput, set.status !== 'pending' && styles.inputCompleted]}
                   value={set.reps}
                   onChangeText={v => updateSet(set.globalIdx, 'reps', v)}
                   keyboardType="number-pad"
                   placeholder="sec"
                   placeholderTextColor="#6B7280"
-                  editable={set.status === 'pending'}
                 />
                 <Text style={styles.setX}>s</Text>
               </>
             ) : (
               <>
                 <TextInput
-                  style={[styles.setInput, set.status !== 'pending' && styles.inputDisabled]}
+                  style={[styles.setInput, set.status !== 'pending' && styles.inputCompleted]}
                   value={set.reps}
                   onChangeText={v => updateSet(set.globalIdx, 'reps', v)}
                   keyboardType="number-pad"
                   placeholder="reps"
                   placeholderTextColor="#6B7280"
-                  editable={set.status === 'pending'}
                 />
                 <Text style={styles.setX}>×</Text>
               </>
@@ -695,19 +850,16 @@ export default function LogWorkout() {
             {set.exerciseType !== 'time' ? (
               <>
                 <TextInput
-                  style={[styles.setInput, set.status !== 'pending' && styles.inputDisabled, parseFloat(set.weight) < 0 && styles.inputCounterweight]}
+                  style={[styles.setInput, set.status !== 'pending' && styles.inputCompleted, parseFloat(set.weight) < 0 && styles.inputCounterweight]}
                   value={set.weight}
                   onChangeText={v => updateSet(set.globalIdx, 'weight', v)}
                   keyboardType="decimal-pad"
                   placeholder="kg"
                   placeholderTextColor="#6B7280"
-                  editable={set.status === 'pending'}
                 />
-                {set.status === 'pending' && (
-                  <TouchableOpacity style={styles.signToggle} onPress={() => toggleWeightSign(set.globalIdx)}>
-                    <Text style={[styles.signToggleText, parseFloat(set.weight) < 0 && styles.signToggleActive]}>±</Text>
-                  </TouchableOpacity>
-                )}
+                <TouchableOpacity style={styles.signToggle} onPress={() => toggleWeightSign(set.globalIdx)}>
+                  <Text style={[styles.signToggleText, parseFloat(set.weight) < 0 && styles.signToggleActive]}>±</Text>
+                </TouchableOpacity>
               </>
             ) : null}
             {set.status === 'pending' ? (
@@ -728,9 +880,9 @@ export default function LogWorkout() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <View style={[styles.statusBadge, set.status === 'done' ? styles.statusDone : styles.statusFailed]}>
+              <TouchableOpacity onPress={() => setSets(prev => prev.map((s, i) => i === set.globalIdx ? { ...s, status: 'pending' as const } : s))} style={[styles.statusBadge, set.status === 'done' ? styles.statusDone : styles.statusFailed]}>
                 <Text style={styles.statusText}>{set.status === 'done' ? '✓' : '✗'}</Text>
-              </View>
+              </TouchableOpacity>
             )}
           </View>
         </View>
@@ -753,6 +905,25 @@ export default function LogWorkout() {
         {!selectedTemplate ? (
           <>
             <Text style={styles.title}>Select Workout</Text>
+
+            {gymProfiles.length > 1 && (
+              <View style={styles.gymProfileSelector}>
+                <Text style={styles.gymProfileLabel}>Gym</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {gymProfiles.map(gp => (
+                      <TouchableOpacity
+                        key={gp.id}
+                        style={[styles.gymProfileChip, gp.isActive === 1 && styles.gymProfileChipActive]}
+                        onPress={() => switchGymProfile(gp.id)}
+                      >
+                        <Text style={[styles.gymProfileChipText, gp.isActive === 1 && styles.gymProfileChipTextActive]}>{gp.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+            )}
 
             {templates.length === 0 ? (
               <View style={styles.emptyState}>
@@ -805,9 +976,16 @@ export default function LogWorkout() {
 
             {logMode === 'active' && (
               <View style={styles.elapsedBanner}>
-                <Text style={styles.elapsedLabel}>Elapsed</Text>
+                <Text style={styles.elapsedLabel}>{paused ? 'Paused' : 'Elapsed'}</Text>
                 <Text style={styles.elapsedTime}>{formatElapsed(elapsedSeconds)}</Text>
+                <TouchableOpacity style={styles.pauseBtn} onPress={togglePause}>
+                  <Text style={styles.pauseBtnText}>{paused ? 'Resume' : 'Pause'}</Text>
+                </TouchableOpacity>
               </View>
+            )}
+
+            {showTimer && (
+              <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
             )}
 
             <View style={styles.toggleRow}>
@@ -817,18 +995,6 @@ export default function LogWorkout() {
                 </Text>
               </TouchableOpacity>
             </View>
-
-            {preWorkoutRecs.length > 0 && (
-              <View style={styles.preWorkoutRecs}>
-                <Text style={styles.preWorkoutRecsTitle}>Pre-Workout Tips</Text>
-                {preWorkoutRecs.map((rec, i) => (
-                  <View key={i} style={styles.preWorkoutRecCard}>
-                    <Text style={styles.preWorkoutRecExercise}>{rec.exerciseName}</Text>
-                    <Text style={styles.preWorkoutRecMessage}>{rec.message}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
 
             {(() => {
               // Build superset group membership counts
@@ -1029,15 +1195,76 @@ export default function LogWorkout() {
         )}
       </ScrollView>
 
-      {showTimer && (
-        <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
-      )}
+      <Modal visible={equipConflicts.length > 0} animationType="slide" transparent>
+        <View style={styles.conflictOverlay}>
+          <View style={styles.conflictContent}>
+            <Text style={styles.conflictTitle}>Equipment Not Available</Text>
+            <Text style={styles.conflictSubtitle}>Some exercises need equipment not in this gym profile.</Text>
+            <ScrollView style={{ maxHeight: 400 }}>
+              {equipConflicts.map((c, i) => (
+                <View key={i} style={styles.conflictCard}>
+                  <View style={styles.conflictExRow}>
+                    <Text style={styles.conflictExName}>{c.exerciseName}</Text>
+                    <Text style={styles.conflictEquip}>{c.equipment}</Text>
+                  </View>
+                  {c.suggestion ? (
+                    <View style={styles.conflictSwapRow}>
+                      <Icon name="swap" size={14} color="#3B82F6" />
+                      <Text style={styles.conflictSwapText}>{c.suggestion.name}</Text>
+                      <Text style={styles.conflictSwapEquip}>{c.suggestion.equipment}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.conflictNoSwap}>No alternative found — will keep original</Text>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.conflictButtons}>
+              <TouchableOpacity style={styles.conflictAcceptBtn} onPress={() => {
+                if (!pendingWorkout) return;
+                const swaps: Record<number, number> = {};
+                for (const c of equipConflicts) {
+                  if (c.suggestion) swaps[c.exerciseId] = c.suggestion.id;
+                }
+                // Save this gym variant for future use
+                const activeGym = gymProfiles.find(g => g.isActive === 1);
+                if (activeGym && Object.keys(swaps).length > 0) {
+                  const variantKey = `gym_variant_${activeGym.id}_${pendingWorkout.templateId}`;
+                  db.runSync(
+                    "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, ?)",
+                    [variantKey, JSON.stringify(swaps)]
+                  );
+                }
+                setEquipConflicts([]);
+                startWorkout(pendingWorkout.templateId, pendingWorkout.mode, swaps);
+                setPendingWorkout(null);
+              }}>
+                <Text style={styles.conflictBtnText}>Accept Swaps</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.conflictIgnoreBtn} onPress={() => {
+                if (!pendingWorkout) return;
+                setEquipConflicts([]);
+                startWorkout(pendingWorkout.templateId, pendingWorkout.mode);
+                setPendingWorkout(null);
+              }}>
+                <Text style={styles.conflictBtnText}>Ignore</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.conflictCancelBtn} onPress={() => {
+                setEquipConflicts([]);
+                setPendingWorkout(null);
+              }}>
+                <Text style={styles.conflictCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={showSwapPicker} animationType="slide">
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Swap Exercise</Text>
-            <TouchableOpacity onPress={() => setShowSwapPicker(false)}>
+            <TouchableOpacity onPress={() => { setShowSwapPicker(false); setExerciseSearch(''); }}>
               <Icon name="chevronLeft" size={28} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -1048,9 +1275,18 @@ export default function LogWorkout() {
               </Text>
             </View>
           )}
+          <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search exercises..."
+              placeholderTextColor="#6B7280"
+              value={exerciseSearch}
+              onChangeText={setExerciseSearch}
+            />
+          </View>
           <ScrollView style={styles.modalScroll}>
-            {(allExercises as any[]).map((ex, idx) => {
-              const showDivider = idx > 0 && (allExercises as any[])[idx - 1].score > 0 && ex.score === 0;
+            {(allExercises as any[]).filter(ex => !exerciseSearch || ex.name.toLowerCase().includes(exerciseSearch.toLowerCase()) || ex.bodyPart.toLowerCase().includes(exerciseSearch.toLowerCase())).map((ex, idx, arr) => {
+              const showDivider = idx > 0 && arr[idx - 1].score > 0 && ex.score === 0;
               return (
                 <View key={ex.id}>
                   {showDivider && (
@@ -1083,12 +1319,22 @@ export default function LogWorkout() {
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Add Exercise</Text>
-            <TouchableOpacity onPress={() => setShowExercisePicker(false)}>
+            <TouchableOpacity onPress={() => { setShowExercisePicker(false); setExerciseSearch(''); }}>
               <Icon name="chevronLeft" size={28} color="#fff" />
             </TouchableOpacity>
           </View>
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search exercises..."
+              placeholderTextColor="#6B7280"
+              value={exerciseSearch}
+              onChangeText={setExerciseSearch}
+              autoFocus
+            />
+          </View>
           <ScrollView style={styles.modalScroll}>
-            {allExercisesForPicker.map(ex => (
+            {allExercisesForPicker.filter(ex => !exerciseSearch || ex.name.toLowerCase().includes(exerciseSearch.toLowerCase()) || ex.bodyPart.toLowerCase().includes(exerciseSearch.toLowerCase())).map(ex => (
               <TouchableOpacity key={ex.id} style={styles.exerciseOption} onPress={() => addFreestyleExercise(ex)}>
                 <Text style={styles.exerciseOptionName}>{ex.name}</Text>
                 <Text style={styles.exerciseOptionMeta}>{ex.bodyPart} • {ex.equipment}</Text>
@@ -1151,6 +1397,7 @@ const styles = StyleSheet.create({
   setFixedLabel: { color: '#D1D5DB', fontSize: 15, fontWeight: '600', width: 60, textAlign: 'center' },
   setFixedLabelSmall: { color: '#D1D5DB', fontSize: 13, fontWeight: '600', width: 46, textAlign: 'center' },
   inputDisabled: { backgroundColor: '#1F2937' },
+  inputCompleted: { backgroundColor: '#1F2937', borderWidth: 1, borderColor: '#374151' },
   setX: { color: '#6B7280', marginHorizontal: 8, fontSize: 16 },
   signToggle: { paddingHorizontal: 4, paddingVertical: 4, marginLeft: 2 },
   signToggleText: { fontSize: 16, color: '#6B7280', fontWeight: '600' },
@@ -1177,19 +1424,15 @@ const styles = StyleSheet.create({
   elapsedBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1E3A8A', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, marginBottom: 12 },
   elapsedLabel: { color: '#3B82F6', fontSize: 14, fontWeight: '600' },
   elapsedTime: { color: '#fff', fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  pauseBtn: { backgroundColor: '#374151', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
+  pauseBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   addExerciseBtn: { backgroundColor: '#3B82F6', padding: 14, borderRadius: 10, marginBottom: 8, alignItems: 'center' },
   addExerciseBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-
-  preWorkoutRecs: { backgroundColor: '#1E3A8A', borderRadius: 10, padding: 12, marginBottom: 16 },
-  preWorkoutRecsTitle: { color: '#fff', fontWeight: 'bold', fontSize: 14, marginBottom: 8 },
-  preWorkoutRecCard: { backgroundColor: '#1E40AF', borderRadius: 6, padding: 8, marginBottom: 4 },
-  preWorkoutRecExercise: { color: '#fff', fontWeight: '600', fontSize: 13 },
-  preWorkoutRecMessage: { color: '#D1D5DB', fontSize: 12, marginTop: 2 },
   modalContainer: { flex: 1, backgroundColor: '#111827' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#374151' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, paddingTop: 60, borderBottomWidth: 1, borderBottomColor: '#374151' },
   modalTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
-  closeButton: { fontSize: 40, color: '#fff', fontWeight: 'bold' },
   modalScroll: { flex: 1, padding: 16 },
+  searchInput: { backgroundColor: '#374151', color: '#fff', padding: 12, borderRadius: 8, fontSize: 16 },
   exerciseOption: { backgroundColor: '#1F2937', padding: 16, borderRadius: 12, marginBottom: 12 },
   exerciseOptionName: { fontSize: 16, fontWeight: '600', color: '#fff' },
   exerciseOptionMeta: { fontSize: 13, color: '#9CA3AF', marginTop: 4 },
@@ -1202,4 +1445,28 @@ const styles = StyleSheet.create({
   swapDividerText: { color: '#6B7280', fontSize: 12, fontWeight: '600' },
   manageLink: { backgroundColor: '#374151', padding: 14, borderRadius: 10, marginBottom: 12, alignItems: 'center' },
   manageLinkText: { color: '#D1D5DB', fontSize: 15, fontWeight: '600' },
+  gymProfileSelector: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16, backgroundColor: '#1F2937', borderRadius: 10, padding: 12 },
+  gymProfileLabel: { color: '#9CA3AF', fontSize: 13, fontWeight: '600' },
+  gymProfileChip: { backgroundColor: '#374151', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  gymProfileChipActive: { backgroundColor: '#3B82F6' },
+  gymProfileChipText: { color: '#9CA3AF', fontSize: 13, fontWeight: '600' },
+  gymProfileChipTextActive: { color: '#fff' },
+  conflictOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 20 },
+  conflictContent: { backgroundColor: '#1F2937', borderRadius: 16, padding: 20, maxHeight: '80%' },
+  conflictTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
+  conflictSubtitle: { fontSize: 13, color: '#9CA3AF', marginBottom: 16 },
+  conflictCard: { backgroundColor: '#374151', borderRadius: 10, padding: 12, marginBottom: 8 },
+  conflictExRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  conflictExName: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 },
+  conflictEquip: { color: '#EF4444', fontSize: 12 },
+  conflictSwapRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  conflictSwapText: { color: '#3B82F6', fontSize: 13, fontWeight: '600', flex: 1 },
+  conflictSwapEquip: { color: '#9CA3AF', fontSize: 12 },
+  conflictNoSwap: { color: '#6B7280', fontSize: 12, marginTop: 6, fontStyle: 'italic' },
+  conflictButtons: { marginTop: 16, gap: 8 },
+  conflictAcceptBtn: { backgroundColor: '#3B82F6', padding: 14, borderRadius: 10, alignItems: 'center' },
+  conflictIgnoreBtn: { backgroundColor: '#374151', padding: 14, borderRadius: 10, alignItems: 'center' },
+  conflictCancelBtn: { padding: 10, alignItems: 'center' },
+  conflictBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  conflictCancelText: { color: '#9CA3AF', fontSize: 14 },
 });

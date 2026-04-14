@@ -1,6 +1,9 @@
 import * as SQLite from 'expo-sqlite';
 import exercises from './exercises.json';
-import fitnotesData from './fitnotes-import.json';
+import { getSpecificEquipment } from './equipment-mapping';
+import { getCorrectBodyPart } from './body-part-fixer';
+import { getExerciseDescription } from './exercise-descriptions';
+import { getStandardizedName } from './exercise-name-fixer';
 
 const db = SQLite.openDatabaseSync('gymtracker.db');
 
@@ -127,6 +130,7 @@ export const initDatabase = () => {
     'ALTER TABLE set_logs ADD COLUMN notes TEXT',
     "ALTER TABLE exercise_progression_config ADD COLUMN progression_type TEXT DEFAULT 'reps'",
     "ALTER TABLE exercises ADD COLUMN exercise_type TEXT DEFAULT 'standard'",
+    "ALTER TABLE exercises ADD COLUMN specific_equipment TEXT",
   ];
   for (const sql of migrations) {
     try { db.runSync(sql); } catch (_) { /* column already exists */ }
@@ -387,6 +391,60 @@ export const initDatabase = () => {
     ['Good Morning', 'Hamstrings'],
     ['Good Morning Off Pins', 'Hamstrings'],
     ['Stiff Leg Barbell Good Morning', 'Hamstrings'],
+    // Chin-ups = lats not biceps
+    ['Chin-Up', 'Lats'],
+    ['Close-Grip Front Lat Pulldown', 'Lats'],
+    // Band assisted pull-up = lats not abs
+    ['Band Assisted Pull-Up', 'Lats'],
+    // Bench press = chest not deltoids
+    ['Bench Press', 'Chest'],
+    ['Bench Press - Powerlifting', 'Chest'],
+    ['Bench Press - with Bands', 'Chest'],
+    // Cable rows = lats
+    ['Cable Rope Rear-Delt Rows', 'Lats'],
+    ['Cable Deadlifts', 'Hamstrings'],
+    // Cable crossover = chest not deltoids
+    ['Cable Crossover', 'Chest'],
+    // Bent over low pulley = deltoids not back
+    ['Bent Over Low-Pulley Side Lateral', 'Deltoids'],
+    // Cable rear delt fly = deltoids
+    ['Cable Rear Delt Fly', 'Deltoids'],
+    // Back extension = back (lower) — already correct but confirm
+    ['Back Extension', 'Back (Lower)'],
+    // Bent over barbell row = lats not biceps
+    ['Bent Over Barbell Row', 'Lats'],
+    // Close-grip push-up = triceps not abs
+    ['Close-Grip Push-Up Off of A Dumbbell', 'Triceps'],
+    // Alternating cable shoulder press = deltoids not trapezius
+    ['Alternating Cable Shoulder Press', 'Deltoids'],
+    // Alternating deltoid raise = deltoids not trapezius
+    ['Alternating Deltoid Raise', 'Deltoids'],
+    // Bent over dumbbell rear delt raise = deltoids not trapezius
+    ['Bent Over Dumbbell Rear Delt Raise with Head on Bench', 'Deltoids'],
+    // Cable internal rotation = deltoids not trapezius
+    ['Cable Internal Rotation', 'Deltoids'],
+    // Chin to chest stretch = neck not trapezius
+    // Scapular pull-up = lats
+    ['Scapular Pull-Up', 'Lats'],
+    // Push press = deltoids not quadriceps
+    ['Push Press', 'Deltoids'],
+    // Clean = back (lower) is ok but could be hamstrings
+    // Prowler sprint = quadriceps not calves
+    ['Prowler Sprint', 'Quadriceps'],
+    // Ball leg curl = hamstrings not calves
+    ['Ball Leg Curl', 'Hamstrings'],
+    // Bicycling stationary = quadriceps not calves
+    ['Bicycling, Stationary', 'Quadriceps'],
+    // Walking treadmill = cardio
+    ['Walking, Treadmill', 'Cardio'],
+    // Bench jump = quadriceps not calves
+    ['Bench Jump', 'Quadriceps'],
+    // Rocket jump = quadriceps not calves
+    ['Rocket Jump', 'Quadriceps'],
+    // Scissors jump = quadriceps not gluteals
+    ['Scissors Jump', 'Quadriceps'],
+    // Cable hammer curls = biceps (already correct)
+    // Cable preacher curl = biceps (already correct)
     // Dumbbell triceps extension = triceps not chest
     ['Lying Dumbbell Tricep Extension', 'Triceps'],
     ['Standing One-Arm Dumbbell Triceps Extension', 'Triceps'],
@@ -394,6 +452,81 @@ export const initDatabase = () => {
     ['Standing Bent-Over One-Arm Dumbbell Triceps Extension', 'Triceps'],
     ['Incline Barbell Triceps Extension', 'Triceps'],
     ['Standing Low-Pulley One-Arm Triceps Extension', 'Triceps'],
+    // Around the worlds / round the world = deltoids (shoulder rotation)
+    ['Around the Worlds', 'Deltoids'],
+    ['Round the World Shoulder Stretch', 'Deltoids'],
+    // Arnold press = deltoids not trapezius
+    ['Arnold Dumbbell Press', 'Deltoids'],
+    // Arm circles = deltoids not trapezius
+    ['Arm Circles', 'Deltoids'],
+    // === Ab exercises: split into Upper Abs, Lower Abs, Obliques ===
+    // Upper abs (crunches, sit-ups, cable crunches)
+    ['3/4 Sit-Up', 'Abdominals (Upper)'],
+    ['Ab Crunch Machine', 'Abdominals (Upper)'],
+    ['Cable Crunch', 'Abdominals (Upper)'],
+    ['Cable Reverse Crunch', 'Abdominals (Lower)'],
+    ['Crunch', 'Abdominals (Upper)'],
+    ['Crunch - Hands Overhead', 'Abdominals (Upper)'],
+    ['Crunch - Legs on Exercise Ball', 'Abdominals (Upper)'],
+    ['Cross Crunch', 'Obliques'],
+    ['Cross-Body Crunch', 'Obliques'],
+    ['Crunches', 'Abdominals (Upper)'],
+    ['Decline Crunch', 'Abdominals (Upper)'],
+    ['Exercise Ball Crunch', 'Abdominals (Upper)'],
+    ['Weighted Crunches', 'Abdominals (Upper)'],
+    ['Sit-Up', 'Abdominals (Upper)'],
+    ['Weighted Sit-Ups - with Bands', 'Abdominals (Upper)'],
+    ['BOSU Ball Cable Crunch with Side Bends', 'Obliques'],
+    // Lower abs (leg raises, reverse crunches, hanging)
+    ['Flat Bench Lying Leg Raise', 'Abdominals (Lower)'],
+    ['Hanging Leg Raise', 'Abdominals (Lower)'],
+    ['Hanging Pike', 'Abdominals (Lower)'],
+    ['Jackknife Sit-Up', 'Abdominals (Lower)'],
+    ['Knee/Hip Raise on Parallel Bars', 'Abdominals (Lower)'],
+    ['Knee Raise on Parallel Bars', 'Abdominals (Lower)'],
+    ['Lying Leg Raise', 'Abdominals (Lower)'],
+    ['Reverse Crunch', 'Abdominals (Lower)'],
+    ['Scissors', 'Abdominals (Lower)'],
+    ['Scissor Kick', 'Abdominals (Lower)'],
+    ['Flutter Kicks', 'Abdominals (Lower)'],
+    ['Bottoms Up', 'Abdominals (Lower)'],
+    ['Butt-Ups', 'Abdominals (Lower)'],
+    ['Mountain Climbers', 'Abdominals (Lower)'],
+    // Obliques (twists, side bends, woodchops)
+    ['Russian Twist', 'Obliques'],
+    ['Cable Russian Twists', 'Obliques'],
+    ['Barbell Side Bend', 'Obliques'],
+    ['Dumbbell Side Bend', 'Obliques'],
+    ['Oblique Crunches', 'Obliques'],
+    ['Oblique Crunches - on the Floor', 'Obliques'],
+    ['Cable Judo Flip', 'Obliques'],
+    ['Spell Caster', 'Obliques'],
+    ['Wind Sprints', 'Obliques'],
+    ['Alternate Heel Touchers', 'Obliques'],
+    // Ab rollouts = full core
+    ['Ab Roller', 'Abdominals (Upper)'],
+    ['Barbell Ab Rollout', 'Abdominals (Upper)'],
+    ['Barbell Ab Rollout - on Knees', 'Abdominals (Upper)'],
+    ['Barbell Rollout from Bench', 'Abdominals (Upper)'],
+    // Planks = full core
+    ['Plank', 'Abdominals (Upper)'],
+    ['Side Plank', 'Obliques'],
+    // === Exercises wrongly tagged as abs ===
+    ['Alternating Floor Press', 'Chest'],
+    ['Alternating Renegade Row', 'Lats'],
+    ['Atlas Stones', 'Back (Lower)'],
+    ['Advanced Kettlebell Windmill', 'Obliques'],
+    ['Air Bike', 'Abdominals (Upper)'],
+    ['Close-Grip Push-Up Off of A Dumbbell', 'Triceps'],
+    ['Sandbag Load', 'Back (Lower)'],
+    ['Alternating Kettlebell Row', 'Lats'],
+    ['Alternating Kettlebell Press', 'Deltoids'],
+    // Bent-Over Row (dumbbell) = lats not back lower
+    ['Bent-Over Row', 'Lats'],
+    // Barbell Row = lats not back lower
+    ['Barbell Row', 'Lats'],
+    // Barbell rear delt row = deltoids not biceps
+    ['Barbell Rear Delt Row', 'Deltoids'],
   ];
   for (const [name, bodyPart] of bodyPartFixes) {
     db.runSync('UPDATE exercises SET body_part = ? WHERE LOWER(name) = LOWER(?) AND is_custom = 0', [bodyPart, name]);
@@ -406,133 +539,14 @@ export const initDatabase = () => {
 
   if (result?.count === 0) {
     for (const ex of exercises) {
+      const [name, bodyPart, equip, instructions] = ex as [string, string, string, string];
+      const specific = getSpecificEquipment(name, equip);
       db.runSync(
-        'INSERT INTO exercises (name, body_part, equipment, instructions, is_custom) VALUES (?, ?, ?, ?, 0)',
-        ex as [string, string, string, string]
+        'INSERT INTO exercises (name, body_part, equipment, instructions, is_custom, specific_equipment) VALUES (?, ?, ?, ?, 0, ?)',
+        [name, bodyPart, equip, instructions, specific]
       );
     }
   }
-  // One-time import of FitNotes workout history
-  const importCheck = db.getFirstSync<{ count: number }>(
-    'SELECT COUNT(*) as count FROM workout_logs'
-  );
-
-  if (importCheck?.count === 0) {
-    const exerciseCache = new Map<string, number>();
-    
-    const getOrCreateExercise = (name: string): number => {
-      const lowerName = name.toLowerCase();
-      if (exerciseCache.has(lowerName)) return exerciseCache.get(lowerName)!;
-      
-      const existing = db.getFirstSync<{ id: number }>(
-        'SELECT id FROM exercises WHERE LOWER(name) = ?', [lowerName]
-      );
-      if (existing) { exerciseCache.set(lowerName, existing.id); return existing.id; }
-      
-      const ins = db.runSync(
-        'INSERT INTO exercises (name, body_part, equipment, instructions, is_custom) VALUES (?, ?, ?, ?, 1)',
-        [name, 'Other', 'Other', '']
-      );
-      const newId = Number(ins.lastInsertRowId);
-      exerciseCache.set(lowerName, newId);
-      return newId;
-    };
-
-    for (const workout of fitnotesData as any[]) {
-      const durationMin = Math.round(workout.duration / 60);
-      const wRes = db.runSync(
-        'INSERT INTO workout_logs (template_id, date, duration) VALUES (?, ?, ?)',
-        [null, workout.date, durationMin]
-      );
-      const wId = Number(wRes.lastInsertRowId);
-      for (const set of workout.sets) {
-        const exId = getOrCreateExercise(set.exercise);
-        db.runSync(
-          'INSERT INTO set_logs (workout_log_id, exercise_id, set_number, reps, weight, is_drop_set) VALUES (?, ?, ?, ?, ?, 0)',
-          [wId, exId, set.setNumber, set.reps, set.weight]
-        );
-      }
-    }
-    console.log('FitNotes import complete');
-  }
-
-  // Seed workout templates (Monday / Thursday / Friday)
-  const templateCheck = db.getFirstSync<{ count: number }>(
-    'SELECT COUNT(*) as count FROM workout_templates'
-  );
-
-  if (templateCheck?.count === 0) {
-    const findExercise = (name: string): number | null => {
-      const row = db.getFirstSync<{ id: number }>(
-        'SELECT id FROM exercises WHERE LOWER(name) = ?', [name.toLowerCase()]
-      );
-      return row?.id ?? null;
-    };
-
-    const templates: { name: string; duration: number; exercises: { name: string; sets: number; reps: number; rest: number }[] }[] = [
-      {
-        name: 'Monday - Upper Body',
-        duration: 75,
-        exercises: [
-          { name: 'Machine Assisted Pull-Up', sets: 4, reps: 10, rest: 90 },
-          { name: 'Dumbbell Bench Press', sets: 4, reps: 10, rest: 90 },
-          { name: 'Bent-over Row', sets: 6, reps: 12, rest: 60 },
-          { name: 'Dumbbell Shoulder Press', sets: 3, reps: 12, rest: 60 },
-          { name: 'Standing Cable Wood Chop', sets: 3, reps: 12, rest: 60 },
-          { name: 'Lateral Raise', sets: 3, reps: 12, rest: 60 },
-          { name: 'Face Pull', sets: 3, reps: 8, rest: 60 },
-        ],
-      },
-      {
-        name: 'Thursday - Legs',
-        duration: 80,
-        exercises: [
-          { name: 'Leg Press', sets: 3, reps: 8, rest: 120 },
-          { name: 'Barbell Deadlift', sets: 4, reps: 8, rest: 120 },
-          { name: 'Barbell Hip Thrust', sets: 3, reps: 9, rest: 90 },
-          { name: 'Lying Leg Curls', sets: 3, reps: 12, rest: 60 },
-          { name: 'Single-Leg Leg Extension', sets: 4, reps: 8, rest: 60 },
-          { name: 'Standing Calf Raise', sets: 4, reps: 12, rest: 60 },
-          { name: 'Thigh Adductor', sets: 2, reps: 12, rest: 60 },
-          { name: 'Thigh Abductor', sets: 2, reps: 12, rest: 60 },
-        ],
-      },
-      {
-        name: 'Friday - Pull & Arms',
-        duration: 70,
-        exercises: [
-          { name: 'Wide-Grip Lat Pulldown', sets: 3, reps: 9, rest: 90 },
-          { name: 'Seated Cable Rows', sets: 3, reps: 9, rest: 90 },
-          { name: 'Barbell Incline Bench Press - Medium Grip', sets: 3, reps: 8, rest: 90 },
-          { name: 'Lying Rear Delt Raise', sets: 3, reps: 8, rest: 60 },
-          { name: 'Dumbbell Alternate Bicep Curl', sets: 2, reps: 11, rest: 60 },
-          { name: 'Triceps Pushdown - Rope Attachment', sets: 2, reps: 11, rest: 60 },
-          { name: "Farmer's Walk", sets: 2, reps: 4, rest: 60 },
-          { name: 'Around The Worlds', sets: 3, reps: 12, rest: 60 },
-        ],
-      },
-    ];
-
-    for (const tmpl of templates) {
-      const tRes = db.runSync(
-        'INSERT INTO workout_templates (name, estimated_duration) VALUES (?, ?)',
-        [tmpl.name, tmpl.duration * 60]
-      );
-      const tId = Number(tRes.lastInsertRowId);
-
-      tmpl.exercises.forEach((ex, idx) => {
-        const exId = findExercise(ex.name);
-        if (exId) {
-          db.runSync(
-            'INSERT INTO template_exercises (template_id, exercise_id, sets, target_reps, rest_time, exercise_order) VALUES (?, ?, ?, ?, ?, ?)',
-            [tId, exId, ex.sets, ex.reps, ex.rest, idx]
-          );
-        }
-      });
-    }
-    console.log('Workout templates seeded');
-  }
-
   // Sync exercise_progression_config rep ranges and progression_type from template target_reps
   // Fixes configs that still have the old 8/12 defaults when the template says otherwise
   // Also auto-detects progression_type for known exercise patterns
@@ -586,16 +600,190 @@ export const initDatabase = () => {
       (db as any).__needsRecRegen = true;
     }
 
-    // One-time: clean up orphaned workout logs (cancelled workouts with no sets)
-    const orphanCleanDone = db.getFirstSync<{ value: string }>(
-      "SELECT value FROM user_settings WHERE key = 'orphan_cleanup_v1'"
+    // Clean up orphaned workout logs (cancelled workouts with no sets) — runs every startup
+    db.runSync(
+      "DELETE FROM workout_logs WHERE id NOT IN (SELECT DISTINCT workout_log_id FROM set_logs)"
     );
-    if (!orphanCleanDone) {
+
+    // Ensure at least one default gym profile exists
+    const gymCount = db.getFirstSync<{ c: number }>('SELECT COUNT(*) as c FROM gym_profiles');
+    if (!gymCount || gymCount.c === 0) {
       db.runSync(
-        "DELETE FROM workout_logs WHERE id NOT IN (SELECT DISTINCT workout_log_id FROM set_logs)"
+        "INSERT INTO gym_profiles (name, equipment, is_active, is_travel_mode) VALUES ('My Gym', '[]', 1, 0)"
       );
+    }
+
+    // One-time: assign freestyle workouts to matching templates
+    const freestyleFixDone = db.getFirstSync<{ value: string }>(
+      "SELECT value FROM user_settings WHERE key = 'freestyle_fix_v1'"
+    );
+    if (!freestyleFixDone) {
+      const freestyleWorkouts = db.getAllSync<{ id: number }>(
+        'SELECT id FROM workout_logs WHERE template_id IS NULL'
+      );
+      for (const fw of freestyleWorkouts) {
+        // Get exercise IDs from this workout
+        const exIds = db.getAllSync<{ exerciseId: number }>(
+          'SELECT DISTINCT exercise_id as exerciseId FROM set_logs WHERE workout_log_id = ?',
+          [fw.id]
+        );
+        if (exIds.length === 0) continue;
+        const exIdSet = new Set(exIds.map(e => e.exerciseId));
+
+        // Find the template with the best overlap
+        const templates = db.getAllSync<{ id: number }>(
+          'SELECT DISTINCT template_id as id FROM template_exercises'
+        );
+        let bestTemplate: number | null = null;
+        let bestScore = 0;
+        for (const t of templates) {
+          const templateExIds = db.getAllSync<{ exerciseId: number }>(
+            'SELECT exercise_id as exerciseId FROM template_exercises WHERE template_id = ?',
+            [t.id]
+          );
+          const overlap = templateExIds.filter(te => exIdSet.has(te.exerciseId)).length;
+          const score = overlap / Math.max(exIdSet.size, templateExIds.length);
+          if (overlap > 0 && score > bestScore) {
+            bestScore = score;
+            bestTemplate = t.id;
+          }
+        }
+        // Assign if at least 50% overlap
+        if (bestTemplate && bestScore >= 0.5) {
+          db.runSync('UPDATE workout_logs SET template_id = ? WHERE id = ?', [bestTemplate, fw.id]);
+        }
+      }
       db.runSync(
-        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('orphan_cleanup_v1', '1')"
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('freestyle_fix_v1', '1')"
+      );
+    }
+
+    // One-time: populate default gym profile equipment from workout history
+    const gymEquipFixDone = db.getFirstSync<{ value: string }>(
+      "SELECT value FROM user_settings WHERE key = 'gym_equip_fix_v1'"
+    );
+    if (!gymEquipFixDone) {
+      const activeProfile = db.getFirstSync<{ id: number; equipment: string }>(
+        'SELECT id, equipment FROM gym_profiles WHERE is_active = 1 LIMIT 1'
+      );
+      if (activeProfile) {
+        const current: string[] = JSON.parse(activeProfile.equipment);
+        const currentSet = new Set(current.map(e => e.toLowerCase()));
+        const allEquipment = db.getAllSync<{ equipment: string }>(
+          `SELECT DISTINCT e.equipment FROM set_logs sl
+           JOIN exercises e ON sl.exercise_id = e.id
+           WHERE e.equipment IS NOT NULL AND e.equipment != ''`
+        );
+        for (const { equipment } of allEquipment) {
+          if (!currentSet.has(equipment.toLowerCase())) {
+            current.push(equipment);
+            currentSet.add(equipment.toLowerCase());
+          }
+        }
+        db.runSync('UPDATE gym_profiles SET equipment = ? WHERE id = ?', [JSON.stringify(current), activeProfile.id]);
+      }
+      db.runSync(
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('gym_equip_fix_v1', '1')"
+      );
+    }
+
+    // One-time: populate specific_equipment for all exercises
+    const specEquipDone = db.getFirstSync<{ value: string }>(
+      "SELECT value FROM user_settings WHERE key = 'specific_equip_v1'"
+    );
+    if (!specEquipDone) {
+      const allExercises = db.getAllSync<{ id: number; name: string; equipment: string }>(
+        "SELECT id, name, COALESCE(equipment, '') as equipment FROM exercises"
+      );
+      for (const ex of allExercises) {
+        const specific = getSpecificEquipment(ex.name, ex.equipment);
+        db.runSync('UPDATE exercises SET specific_equipment = ? WHERE id = ?', [specific, ex.id]);
+      }
+
+      // Update all gym profiles to use specific equipment names
+      const allProfiles = db.getAllSync<{ id: number; equipment: string }>(
+        'SELECT id, equipment FROM gym_profiles'
+      );
+      for (const profile of allProfiles) {
+        // Get specific equipment from exercises the user has actually logged
+        const loggedEquip = db.getAllSync<{ specificEquipment: string }>(
+          `SELECT DISTINCT e.specific_equipment as specificEquipment
+           FROM set_logs sl
+           JOIN exercises e ON sl.exercise_id = e.id
+           WHERE e.specific_equipment IS NOT NULL AND e.specific_equipment != ''`
+        );
+        const equipSet = new Set<string>();
+        for (const { specificEquipment } of loggedEquip) {
+          equipSet.add(specificEquipment);
+        }
+        db.runSync('UPDATE gym_profiles SET equipment = ? WHERE id = ?', [JSON.stringify([...equipSet]), profile.id]);
+      }
+
+      db.runSync(
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('specific_equip_v1', '1')"
+      );
+    }
+
+    // One-time: fix body part mappings using rule-based fixer
+    const bodyPartFixDone = db.getFirstSync<{ value: string }>(
+      "SELECT value FROM user_settings WHERE key = 'body_part_fix_v1'"
+    );
+    if (!bodyPartFixDone) {
+      const allExercises = db.getAllSync<{ id: number; name: string }>(
+        'SELECT id, name FROM exercises WHERE is_custom = 0'
+      );
+      for (const ex of allExercises) {
+        const correct = getCorrectBodyPart(ex.name);
+        if (correct) {
+          db.runSync('UPDATE exercises SET body_part = ? WHERE id = ?', [correct, ex.id]);
+        }
+      }
+      db.runSync(
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('body_part_fix_v1', '1')"
+      );
+    }
+
+    // One-time: improve exercise descriptions
+    const descFixDone = db.getFirstSync<{ value: string }>(
+      "SELECT value FROM user_settings WHERE key = 'desc_fix_v1'"
+    );
+    if (!descFixDone) {
+      const allExercises = db.getAllSync<{ id: number; name: string; instructions: string }>(
+        'SELECT id, name, COALESCE(instructions, \'\') as instructions FROM exercises WHERE is_custom = 0'
+      );
+      for (const ex of allExercises) {
+        const desc = getExerciseDescription(ex.name);
+        if (desc) {
+          db.runSync('UPDATE exercises SET instructions = ? WHERE id = ?', [desc, ex.id]);
+        }
+      }
+      db.runSync(
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('desc_fix_v1', '1')"
+      );
+    }
+
+    // One-time: standardize exercise names
+    const nameFixDone = db.getFirstSync<{ value: string }>(
+      "SELECT value FROM user_settings WHERE key = 'name_fix_v3'"
+    );
+    if (!nameFixDone) {
+      const allExercises = db.getAllSync<{ id: number; name: string }>(
+        'SELECT id, name FROM exercises WHERE is_custom = 0'
+      );
+      for (const ex of allExercises) {
+        const newName = getStandardizedName(ex.name);
+        if (newName && newName !== ex.name) {
+          // Check no duplicate exists
+          const exists = db.getFirstSync<{ id: number }>(
+            'SELECT id FROM exercises WHERE LOWER(name) = LOWER(?) AND id != ?', [newName, ex.id]
+          );
+          if (!exists) {
+            db.runSync('UPDATE exercises SET name = ? WHERE id = ?', [newName, ex.id]);
+          }
+        }
+      }
+      db.runSync(
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('name_fix_v3', '1')"
       );
     }
   } catch (_) { /* no-op */ }

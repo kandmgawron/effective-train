@@ -36,3 +36,9 @@ xcuserdata/
 # OS files
 .DS_Store
 *.orig.*
+
+# Personal data files
+lib/fitnotes-import.json
+assets/data/FitNotesWorkouts.csv
+fitnotes_exercises_standardized_plus_missing.csv
+sqlite_mcp_server.db
