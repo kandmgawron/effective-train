@@ -621,45 +621,6 @@ export default function GymProfiles() {
           </View>
         </View>
 
-        <View style={styles.settingsSection}>
-          <Text style={styles.sectionTitle}>Danger Zone</Text>
-          <TouchableOpacity style={styles.deleteAllBtn} onPress={() => {
-            Alert.alert(
-              'Delete All Data',
-              'This will permanently delete all your workouts, templates, gym profiles, personal records, and settings. Only the exercise library will be kept. This cannot be undone.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Delete Everything', style: 'destructive', onPress: () => {
-                  Alert.alert('Are you sure?', 'All your data will be lost forever.', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Yes, Delete', style: 'destructive', onPress: () => {
-                      db.runSync('DELETE FROM set_logs');
-                      db.runSync('DELETE FROM workout_logs');
-                      db.runSync('DELETE FROM template_exercises');
-                      db.runSync('DELETE FROM workout_templates');
-                      db.runSync('DELETE FROM personal_records');
-                      db.runSync('DELETE FROM progression_recommendations');
-                      db.runSync('DELETE FROM exercise_progression_config');
-                      db.runSync('DELETE FROM bodyweight_log');
-                      db.runSync('DELETE FROM gym_profiles');
-                      db.runSync('DELETE FROM user_settings');
-                      db.runSync('DELETE FROM exercises WHERE is_custom = 1');
-                      // Recreate default gym profile
-                      db.runSync("INSERT INTO gym_profiles (name, equipment, is_active, is_travel_mode) VALUES ('My Gym', '[]', 1, 0)");
-                      loadProfiles();
-                      loadSettings();
-                      loadBodyweight();
-                      Alert.alert('Done', 'All data has been deleted.');
-                    }},
-                  ]);
-                }},
-              ]
-            );
-          }}>
-            <Text style={styles.deleteAllBtnText}>Delete All Data</Text>
-          </TouchableOpacity>
-        </View>
-
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <Text style={styles.sectionTitle}>Gym Profiles</Text>
           <TouchableOpacity style={styles.button} onPress={() => { setEditingProfileId(null); setNewProfile({ name: '', equipment: [], isTravelMode: false }); setShowModal(true); }}>
@@ -713,6 +674,44 @@ export default function GymProfiles() {
             </View>
           </View>
         ))}
+
+        <View style={[styles.settingsSection, { marginTop: 24, marginBottom: 40 }]}>
+          <Text style={styles.sectionTitle}>Danger Zone</Text>
+          <TouchableOpacity style={styles.deleteAllBtn} onPress={() => {
+            Alert.alert(
+              'Delete All Data',
+              'This will permanently delete all your workouts, templates, gym profiles, personal records, and settings. Only the exercise library will be kept. This cannot be undone.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete Everything', style: 'destructive', onPress: () => {
+                  Alert.alert('Are you sure?', 'All your data will be lost forever.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Yes, Delete', style: 'destructive', onPress: () => {
+                      db.runSync('DELETE FROM set_logs');
+                      db.runSync('DELETE FROM workout_logs');
+                      db.runSync('DELETE FROM template_exercises');
+                      db.runSync('DELETE FROM workout_templates');
+                      db.runSync('DELETE FROM personal_records');
+                      db.runSync('DELETE FROM progression_recommendations');
+                      db.runSync('DELETE FROM exercise_progression_config');
+                      db.runSync('DELETE FROM bodyweight_log');
+                      db.runSync('DELETE FROM gym_profiles');
+                      db.runSync('DELETE FROM user_settings');
+                      db.runSync('DELETE FROM exercises WHERE is_custom = 1');
+                      db.runSync("INSERT INTO gym_profiles (name, equipment, is_active, is_travel_mode) VALUES ('My Gym', '[]', 1, 0)");
+                      loadProfiles();
+                      loadSettings();
+                      loadBodyweight();
+                      Alert.alert('Done', 'All data has been deleted.');
+                    }},
+                  ]);
+                }},
+              ]
+            );
+          }}>
+            <Text style={styles.deleteAllBtnText}>Delete All Data</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
       <Modal visible={showModal} animationType="slide" transparent>

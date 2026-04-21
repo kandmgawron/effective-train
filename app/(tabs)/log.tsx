@@ -583,6 +583,24 @@ export default function LogWorkout() {
     const date = format(new Date(), 'yyyy-MM-dd');
     detectPersonalRecords(workoutLogId, date);
 
+    // Show PR popup if any were set
+    const newPRs = db.getAllSync<{ exerciseName: string; recordType: string; value: number }>(
+      `SELECT e.name as exerciseName, pr.record_type as recordType, pr.value
+       FROM personal_records pr
+       JOIN exercises e ON pr.exercise_id = e.id
+       WHERE pr.workout_log_id = ?`,
+      [workoutLogId]
+    );
+    if (newPRs.length > 0) {
+      const prLines = newPRs.map(pr => {
+        const type = pr.recordType === 'max_weight' ? 'Heaviest Set' : pr.recordType === 'max_volume' ? 'Best Volume' : 'Est. 1RM';
+        return `${pr.exerciseName}: ${pr.value}kg ${type}`;
+      }).join('\n');
+      setTimeout(() => {
+        Alert.alert('🏆 New Personal Records!', prLines);
+      }, 500);
+    }
+
     // Auto-populate active gym profile with equipment from this workout
     const activeProfile = db.getFirstSync<{ id: number; equipment: string }>(
       'SELECT id, equipment FROM gym_profiles WHERE is_active = 1 LIMIT 1'

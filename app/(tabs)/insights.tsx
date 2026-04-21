@@ -3,7 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, LayoutChan
 import { useFocusEffect, useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import db from '@/lib/database';
-import { PersonalRecord, ProgressionRecommendation } from '@/types';
+import { ProgressionRecommendation } from '@/types';
 import Icon from '@/components/Icon';
 import { evaluateProgression } from '@/lib/progression-engine';
 import { ExerciseProgressionConfig } from '@/types';
@@ -20,7 +20,6 @@ interface LastWorkoutSummary {
 
 export default function Insights() {
   const [recommendations, setRecommendations] = useState<(ProgressionRecommendation & { exerciseName: string })[]>([]);
-  const [recentPRs, setRecentPRs] = useState<(PersonalRecord & { exerciseName: string })[]>([]);
   const [lastWorkout, setLastWorkout] = useState<LastWorkoutSummary | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const sectionPositions = useRef<Record<string, number>>({});
@@ -209,20 +208,8 @@ export default function Insights() {
         totalVolume: Math.round(totalVolume),
         exercisesDone: uniqueExercises,
       });
-
-      const prs = db.getAllSync<any>(
-        `SELECT pr.id, pr.exercise_id as exerciseId, e.name as exerciseName,
-                pr.record_type as recordType, pr.value, pr.date
-         FROM personal_records pr
-         JOIN exercises e ON pr.exercise_id = e.id
-         WHERE pr.workout_log_id = ?
-         ORDER BY pr.date DESC`,
-        [latest.id]
-      );
-      setRecentPRs(prs);
     } else {
       setLastWorkout(null);
-      setRecentPRs([]);
     }
   };
 
@@ -319,13 +306,6 @@ export default function Insights() {
           <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
               <Text style={styles.sectionTitle}>Last Workout</Text>
-              <View style={styles.jumpBar}>
-                {recentPRs.length > 0 && (
-                  <TouchableOpacity style={styles.jumpBtn} onPress={() => scrollToSection('prs')}>
-                    <Text style={styles.jumpBtnText}>PRs</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
             </View>
             <Text style={styles.workoutDate}>{lastWorkout.date}</Text>
             <View style={styles.summaryGrid}>
@@ -346,29 +326,6 @@ export default function Insights() {
                 <Text style={styles.summaryLabel}>Volume (t)</Text>
               </View>
             </View>
-          </View>
-        )}
-
-        {recentPRs.length > 0 && (
-          <View style={styles.section} onLayout={onSectionLayout('prs')}>
-            <View style={styles.sectionHeader}>
-              <Icon name="trophy" size={20} color="#F59E0B" />
-              <Text style={styles.prSectionTitle}>Personal Records</Text>
-            </View>
-            {Object.values(recentPRs.reduce<Record<number, { exerciseId: number; exerciseName: string; records: typeof recentPRs }>>((acc, pr) => {
-              if (!acc[pr.exerciseId]) acc[pr.exerciseId] = { exerciseId: pr.exerciseId, exerciseName: pr.exerciseName, records: [] };
-              acc[pr.exerciseId].records.push(pr);
-              return acc;
-            }, {})).map(group => (
-              <TouchableOpacity key={group.exerciseId} style={styles.prCard} onPress={() => router.push(`/progress?exerciseId=${group.exerciseId}`)}>
-                <Text style={styles.prExercise}>{group.exerciseName}</Text>
-                {group.records.map(pr => (
-                  <Text key={pr.id} style={styles.prDetail}>
-                    {pr.recordType === 'max_weight' ? `${pr.value} kg — Heaviest Set` : pr.recordType === 'max_volume' ? `${pr.value} kg — Best Volume Set` : `${pr.value} kg — Est. 1RM`}
-                  </Text>
-                ))}
-              </TouchableOpacity>
-            ))}
           </View>
         )}
 
