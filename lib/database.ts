@@ -547,24 +547,36 @@ export const initDatabase = () => {
       );
     }
   }
-  // Sync exercise_progression_config rep ranges and progression_type from template target_reps
-  // Fixes configs that still have the old 8/12 defaults when the template says otherwise
-  // Also auto-detects progression_type for known exercise patterns
+  // Sync exercise_progression_config rep ranges and progression_type from exercise category
+  // Rep ranges: free-weight compounds 6-8, machine compounds 8-12, isolations 12-15
+  // Users can override via the exercise config screen
   try {
     const allConfigs = db.getAllSync<{ id: number; exerciseId: number; repRangeMin: number; repRangeMax: number; progressionType: string }>(
       'SELECT id, exercise_id as exerciseId, rep_range_min as repRangeMin, rep_range_max as repRangeMax, progression_type as progressionType FROM exercise_progression_config'
     );
     for (const cfg of allConfigs) {
-      const tmplEx = db.getFirstSync<{ targetReps: number }>(
-        'SELECT target_reps as targetReps FROM template_exercises WHERE exercise_id = ? LIMIT 1',
+      const exInfo = db.getFirstSync<{ name: string; movementType: string; equipment: string }>(
+        "SELECT name, COALESCE(movement_type, 'compound') as movementType, COALESCE(equipment, '') as equipment FROM exercises WHERE id = ?",
         [cfg.exerciseId]
       );
-      if (!tmplEx) continue;
-      const t = tmplEx.targetReps;
+      if (!exInfo) continue;
+
+      const name = exInfo.name.toLowerCase();
+      const eq = exInfo.equipment.toLowerCase();
+      const isIsolation = exInfo.movementType === 'isolation';
+      const isMachine = eq.includes('machine') || eq.includes('cable') || eq.includes('leverage') || eq.includes('smith');
+
       let min: number, max: number;
-      if (t <= 5) { min = Math.max(1, t - 1); max = t + 1; }
-      else if (t <= 8) { min = t - 2; max = t; }
-      else { min = t - 2; max = t; }
+      if (isIsolation) {
+        // Isolation exercises: 12-15 reps
+        min = 12; max = 15;
+      } else if (isMachine) {
+        // Machine/cable compound exercises: 8-12 reps
+        min = 8; max = 12;
+      } else {
+        // Free-weight compound exercises (barbell, dumbbell, bodyweight): 6-8 reps
+        min = 6; max = 8;
+      }
 
       // Auto-detect progression_type from exercise name
       const exName = db.getFirstSync<{ name: string }>(
@@ -589,15 +601,43 @@ export const initDatabase = () => {
     }
     // One-time: regenerate recommendations after rep-range migration
     const recMigDone = db.getFirstSync<{ value: string }>(
-      "SELECT value FROM user_settings WHERE key = 'rec_regen_v5'"
+      "SELECT value FROM user_settings WHERE key = 'rec_regen_v6'"
     );
     if (!recMigDone) {
       db.runSync("DELETE FROM progression_recommendations WHERE status = 'active'");
       db.runSync(
-        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('rec_regen_v5', '1')"
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('rec_regen_v6', '1')"
       );
       // Flag so initDatabase caller can regenerate after import completes
       (db as any).__needsRecRegen = true;
+    }
+
+    // One-time: fix template_exercises target_reps based on exercise category
+    // Free-weight compounds: 8, machine compounds: 12, isolations: 15
+    const templateRepFixDone = db.getFirstSync<{ value: string }>(
+      "SELECT value FROM user_settings WHERE key = 'template_reps_fix_v1'"
+    );
+    if (!templateRepFixDone) {
+      const allTemplateExercises = db.getAllSync<{ id: number; exerciseId: number; targetReps: number }>(
+        'SELECT te.id, te.exercise_id as exerciseId, te.target_reps as targetReps FROM template_exercises te'
+      );
+      for (const te of allTemplateExercises) {
+        const exInfo = db.getFirstSync<{ movementType: string; equipment: string }>(
+          "SELECT COALESCE(movement_type, 'compound') as movementType, COALESCE(equipment, '') as equipment FROM exercises WHERE id = ?",
+          [te.exerciseId]
+        );
+        if (!exInfo) continue;
+        const eq = exInfo.equipment.toLowerCase();
+        const isIsolation = exInfo.movementType === 'isolation';
+        const isMachine = eq.includes('machine') || eq.includes('cable') || eq.includes('leverage') || eq.includes('smith');
+        const correctReps = isIsolation ? 15 : isMachine ? 12 : 8;
+        if (te.targetReps !== correctReps) {
+          db.runSync('UPDATE template_exercises SET target_reps = ? WHERE id = ?', [correctReps, te.id]);
+        }
+      }
+      db.runSync(
+        "INSERT OR REPLACE INTO user_settings (key, value) VALUES ('template_reps_fix_v1', '1')"
+      );
     }
 
     // Clean up orphaned workout logs (cancelled workouts with no sets) — runs every startup

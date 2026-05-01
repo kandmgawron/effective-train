@@ -78,10 +78,17 @@ export default function EditTemplate() {
   };
 
   const handleAddExercise = (exercise: Exercise) => {
+    // Set default target reps based on exercise category
+    const eq = exercise.equipment.toLowerCase();
+    const movementType = (exercise as any).movementType || 'compound';
+    const isIsolation = movementType === 'isolation';
+    const isMachine = eq.includes('machine') || eq.includes('cable') || eq.includes('leverage') || eq.includes('smith');
+    const defaultReps = isIsolation ? 15 : isMachine ? 12 : 8;
+
     setSelectedExercises(prev => [...prev, {
       id: Date.now(), templateId: Number(id), exerciseId: exercise.id,
       exerciseName: exercise.name, bodyPart: exercise.bodyPart, equipment: exercise.equipment,
-      instructions: exercise.instructions, sets: 3, targetReps: 10, restTime: 90,
+      instructions: exercise.instructions, sets: 3, targetReps: defaultReps, restTime: 90,
       order: selectedExercises.length, supersetGroup: null,
       exerciseType: (exercise as any).exerciseType || 'standard',
     }]);

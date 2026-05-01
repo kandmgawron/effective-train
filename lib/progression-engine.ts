@@ -222,22 +222,31 @@ function evaluateDoubleProgression(
     };
   }
 
-  const belowMinCount = sessions.slice(0, stagnationThreshold).filter(s =>
-    s.sets.some(set => set.reps < config.repRangeMin)
-  ).length;
+  // Deload: triggered when there's no progress for 3 successive workouts.
+  // "No progress" = same weight AND average reps not improving (same or fewer).
+  if (sessions.length >= 3) {
+    const last3 = sessions.slice(0, 3);
+    const weights = last3.map(s => s.sets[0]?.weight ?? 0);
+    const avgRepsPerSession = last3.map(s =>
+      s.sets.length > 0 ? s.sets.reduce((sum, set) => sum + set.reps, 0) / s.sets.length : 0
+    );
+    const sameWeight = weights.every(w => w === weights[0]);
+    // No progress = avg reps not increasing across the 3 sessions (newest to oldest)
+    const noRepsProgress = avgRepsPerSession[0] <= avgRepsPerSession[2];
 
-  if (belowMinCount >= 3) {
-    const isCounterweight = currentWeight < 0;
-    const deloadWeight = isCounterweight
-      ? roundWeight(currentWeight - increment)
-      : roundWeight(currentWeight - increment);
-    const label = isCounterweight
-      ? `Struggling below ${config.repRangeMin} reps for ${belowMinCount} sessions. Increase assistance to ${Math.abs(deloadWeight)}kg.${CLOSEST_NOTE}`
-      : `Struggling below ${config.repRangeMin} reps for ${belowMinCount} sessions. Deload to ${deloadWeight}kg.${CLOSEST_NOTE}`;
-    return { type: 'DELOAD', message: label, suggestedWeight: deloadWeight };
+    if (sameWeight && noRepsProgress) {
+      const isCounterweight = currentWeight < 0;
+      const deloadWeight = isCounterweight
+        ? roundWeight(currentWeight - increment)
+        : roundWeight(currentWeight - increment);
+      const label = isCounterweight
+        ? `No progress for 3 sessions. Increase assistance to ${Math.abs(deloadWeight)}kg and aim for ${config.repRangeMax} reps.${CLOSEST_NOTE}`
+        : `No progress for 3 sessions at ${currentWeight}kg. Deload to ${deloadWeight}kg and aim for ${config.repRangeMax} reps.${CLOSEST_NOTE}`;
+      return { type: 'DELOAD', message: label, suggestedWeight: deloadWeight, suggestedReps: config.repRangeMax };
+    }
   }
 
-  if (sessions.length >= stagnationThreshold) {
+  if (sessions.length >= stagnationThreshold && stagnationThreshold > 3) {
     const recentWeights = sessions.slice(0, stagnationThreshold).map(s => s.sets[0]?.weight);
     const recentMaxReps = sessions.slice(0, stagnationThreshold).map(s => Math.max(...s.sets.map(set => set.reps)));
     const noProgress = recentWeights.every(w => w === recentWeights[0]) && recentMaxReps.every(r => r === recentMaxReps[0]);
@@ -279,17 +288,25 @@ function evaluateLinearProgression(
     return { type: 'PROGRESS_WEIGHT', message: label, suggestedWeight: newWeight, suggestedReps: dropReps };
   }
 
-  if (sessions.length >= stagnationThreshold) {
-    const recentWeights = sessions.slice(0, stagnationThreshold).map(s => s.sets[0]?.weight);
-    if (recentWeights.every(w => w === recentWeights[0])) {
+  // Deload: no progress for 3 successive workouts at same weight
+  if (sessions.length >= 3) {
+    const last3 = sessions.slice(0, 3);
+    const weights = last3.map(s => s.sets[0]?.weight ?? 0);
+    const avgRepsPerSession = last3.map(s =>
+      s.sets.length > 0 ? s.sets.reduce((sum, set) => sum + set.reps, 0) / s.sets.length : 0
+    );
+    const sameWeight = weights.every(w => w === weights[0]);
+    const noRepsProgress = avgRepsPerSession[0] <= avgRepsPerSession[2];
+
+    if (sameWeight && noRepsProgress) {
       const isCounterweight = currentWeight < 0;
       const deloadWeight = isCounterweight
         ? roundWeight(currentWeight - increment)
         : roundWeight(currentWeight - increment);
       const label = isCounterweight
-        ? `Stuck at ${Math.abs(currentWeight)}kg assistance for ${stagnationThreshold} sessions. Try increasing assistance to ${Math.abs(deloadWeight)}kg.${CLOSEST_NOTE}`
-        : `Stuck at ${currentWeight}kg for ${stagnationThreshold} sessions. Try deloading to ${deloadWeight}kg.${CLOSEST_NOTE}`;
-      return { type: 'DELOAD', message: label, suggestedWeight: deloadWeight };
+        ? `No progress for 3 sessions. Increase assistance to ${Math.abs(deloadWeight)}kg and aim for ${config.repRangeMax} reps.${CLOSEST_NOTE}`
+        : `No progress for 3 sessions at ${currentWeight}kg. Deload to ${deloadWeight}kg and aim for ${config.repRangeMax} reps.${CLOSEST_NOTE}`;
+      return { type: 'DELOAD', message: label, suggestedWeight: deloadWeight, suggestedReps: config.repRangeMax };
     }
   }
 
