@@ -579,14 +579,11 @@ export const initDatabase = () => {
       }
 
       // Auto-detect progression_type from exercise name
-      const exName = db.getFirstSync<{ name: string }>(
-        'SELECT name FROM exercises WHERE id = ?', [cfg.exerciseId]
-      );
-      const name = (exName?.name ?? '').toLowerCase();
+      const exNameLower = name;
       let detectedType = cfg.progressionType || 'reps';
-      if (name.includes('farmer') || name.includes('carry') || name.includes('sled') || name.includes('prowler')) {
+      if (exNameLower.includes('farmer') || exNameLower.includes('carry') || exNameLower.includes('sled') || exNameLower.includes('prowler')) {
         detectedType = 'weight_only';
-      } else if (name.includes('plank') || name.includes('hold') || name.includes('hang') || name.includes('wall sit') || name.includes('l-sit')) {
+      } else if (exNameLower.includes('plank') || exNameLower.includes('hold') || exNameLower.includes('hang') || exNameLower.includes('wall sit') || exNameLower.includes('l-sit')) {
         detectedType = 'time';
       }
 
