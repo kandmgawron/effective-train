@@ -122,16 +122,15 @@ export default function Insights() {
         [exerciseId]
       );
 
-      // Always sync rep range from current template target_reps
-      const templateEx = db.getFirstSync<{ targetReps: number }>(
-        'SELECT target_reps as targetReps FROM template_exercises WHERE exercise_id = ? LIMIT 1',
-        [exerciseId]
-      );
-      const targetReps = templateEx?.targetReps ?? 10;
-      const repMin = Math.max(1, Math.round(targetReps * 2 / 3));
-      const repMax = targetReps;
-
       if (!config) {
+        // No config exists — create one with category-based defaults
+        const eq = (db.getFirstSync<{ equipment: string }>(
+          "SELECT COALESCE(equipment, '') as equipment FROM exercises WHERE id = ?", [exerciseId]
+        )?.equipment ?? '').toLowerCase();
+        const isIsolation = exInfo.movementType === 'isolation';
+        const isMachine = eq.includes('machine') || eq.includes('cable') || eq.includes('leverage') || eq.includes('smith');
+        const repMin = isIsolation ? 12 : isMachine ? 8 : 6;
+        const repMax = isIsolation ? 15 : isMachine ? 12 : 8;
         const defaultIncrement = exInfo.movementType === 'isolation' ? 1.25 : 2.5;
         db.runSync(
           'INSERT INTO exercise_progression_config (exercise_id, weight_increment, rep_range_min, rep_range_max) VALUES (?, ?, ?, ?)',
@@ -147,13 +146,6 @@ export default function Insights() {
         );
       }
       if (!config) continue;
-
-      // Sync config rep range with current template
-      if (config.repRangeMin !== repMin || config.repRangeMax !== repMax) {
-        db.runSync('UPDATE exercise_progression_config SET rep_range_min = ?, rep_range_max = ? WHERE id = ?', [repMin, repMax, config.id]);
-        config.repRangeMin = repMin;
-        config.repRangeMax = repMax;
-      }
 
       const result = evaluateProgression(exerciseId, config as ExerciseProgressionConfig);
       if (!result) continue;

@@ -4,11 +4,19 @@ import { evaluateProgression } from './progression-engine';
 import { format } from 'date-fns';
 
 /**
- * Derive rep range from a template's target_reps.
- * Min is 2/3 of target (e.g. target 12 → min 8, target 6 → min 4)
+ * Derive rep range from exercise category:
+ * - Isolation exercises: 12-15 reps
+ * - Machine/cable compound exercises: 8-12 reps
+ * - Free-weight compound exercises: 6-8 reps
  */
-function deriveRepRange(targetReps: number): { min: number; max: number } {
-  return { min: Math.max(1, Math.round(targetReps * 2 / 3)), max: targetReps };
+function deriveRepRange(movementType: string, equipment: string): { min: number; max: number } {
+  const eq = equipment.toLowerCase();
+  const isIsolation = movementType === 'isolation';
+  const isMachine = eq.includes('machine') || eq.includes('cable') || eq.includes('leverage') || eq.includes('smith');
+
+  if (isIsolation) return { min: 12, max: 15 };
+  if (isMachine) return { min: 8, max: 12 };
+  return { min: 6, max: 8 };
 }
 
 /**
@@ -41,17 +49,12 @@ export function generateRecommendations(workoutLogId: number): void {
   const now = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
 
   for (const { exerciseId } of exercises) {
-    // Look up exercise name and template target_reps
-    const exInfo = db.getFirstSync<{ name: string; movementType: string }>(
-      "SELECT name, COALESCE(movement_type, 'compound') as movementType FROM exercises WHERE id = ?",
+    // Look up exercise info for category-based rep range
+    const exInfo = db.getFirstSync<{ name: string; movementType: string; equipment: string }>(
+      "SELECT name, COALESCE(movement_type, 'compound') as movementType, COALESCE(equipment, '') as equipment FROM exercises WHERE id = ?",
       [exerciseId]
     );
-    const templateEx = db.getFirstSync<{ targetReps: number }>(
-      'SELECT target_reps as targetReps FROM template_exercises WHERE exercise_id = ? LIMIT 1',
-      [exerciseId]
-    );
-    const targetReps = templateEx?.targetReps ?? 10;
-    const { min: repMin, max: repMax } = deriveRepRange(targetReps);
+    const { min: repMin, max: repMax } = deriveRepRange(exInfo?.movementType ?? 'compound', exInfo?.equipment ?? '');
     const detectedType = detectProgressionType(exInfo?.name ?? '');
 
     // Get or create config
@@ -71,13 +74,7 @@ export function generateRecommendations(workoutLogId: number): void {
         [exerciseId, defaultIncrement, repMin, repMax, detectedType]
       );
     } else {
-      // Always sync rep range from current template
-      if (config.repRangeMin !== repMin || config.repRangeMax !== repMax) {
-        db.runSync(
-          'UPDATE exercise_progression_config SET rep_range_min = ?, rep_range_max = ? WHERE id = ?',
-          [repMin, repMax, config.id]
-        );
-      }
+      // Only sync progression_type if it was auto-detected as non-standard
       const needsTypeSync = (config.progressionType || 'reps') === 'reps' && detectedType !== 'reps';
       if (needsTypeSync) {
         db.runSync(

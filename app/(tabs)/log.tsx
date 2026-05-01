@@ -334,6 +334,12 @@ export default function LogWorkout() {
   const addFreestyleExercise = (ex: Exercise) => {
     const exIdx = exercises.length;
     const exType = (ex as any).exerciseType || 'standard';
+    // Set default target reps based on exercise category
+    const eq = ex.equipment.toLowerCase();
+    const movementType = (ex as any).movementType || 'compound';
+    const isIsolation = movementType === 'isolation';
+    const isMachine = eq.includes('machine') || eq.includes('cable') || eq.includes('leverage') || eq.includes('smith');
+    const defaultReps = isIsolation ? 15 : isMachine ? 12 : 8;
     const newTemplateEx: TemplateExercise = {
       id: Date.now(),
       templateId: 0,
@@ -343,7 +349,7 @@ export default function LogWorkout() {
       equipment: ex.equipment,
       instructions: ex.instructions,
       sets: 3,
-      targetReps: 10,
+      targetReps: defaultReps,
       restTime: 90,
       order: exIdx,
       supersetGroup: null,
