@@ -10,7 +10,7 @@ import BackToTop from '@/components/BackToTop';
 
 export default function Progress() {
   const { exerciseId: exerciseIdParam } = useLocalSearchParams<{ exerciseId?: string }>();
-  const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [exercises, setExercises] = useState<(Exercise & { workoutCount: number; maxWeight: number })[]>([]);
   const [selectedExercise, setSelectedExercise] = useState<number | null>(null);
   const [progressData, setProgressData] = useState<ProgressData[]>([]);
   const [stats, setStats] = useState<{ maxWeight: number; totalVolume: number; workoutCount: number; estimated1RM: number } | null>(null);

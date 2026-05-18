@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  typecheck:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit --skipLibCheck --project tsconfig.ci.json
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Audit dependencies
+        run: |
+          echo "## Dependency Audit Results" >> $GITHUB_STEP_SUMMARY
+          npm audit --omit=dev 2>&1 | tee audit-output.txt || true
+          if grep -q "critical" audit-output.txt; then
+            echo "::warning::Critical vulnerabilities found - review audit output"
+            echo "⚠️ Critical vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
+          fi
+          if grep -q "high" audit-output.txt; then
+            echo "::warning::High vulnerabilities found - review audit output"
+            echo "⚠️ High vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
+          fi
+          cat audit-output.txt >> $GITHUB_STEP_SUMMARY

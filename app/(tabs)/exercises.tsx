@@ -461,7 +461,7 @@ export default function ExerciseLibrary() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.button, styles.cancelButton, { flex: 1 }]}
-                onPress={() => { setShowAddModal(false); setNewExercise({ name: '', bodyParts: [], equipment: '', instructions: '' }); }}
+                onPress={() => { setShowAddModal(false); setNewExercise({ name: '', bodyParts: [], equipment: '', specificEquipment: '', instructions: '' }); }}
               >
                 <Text style={styles.buttonText}>Cancel</Text>
               </TouchableOpacity>

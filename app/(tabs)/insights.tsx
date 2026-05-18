@@ -161,6 +161,7 @@ export default function Insights() {
         suggestedExerciseId: null,
         status: 'active',
         createdAt: '',
+        dismissedAt: null,
       });
     }
     liveRecs.sort((a, b) => recPriority(a.type) - recPriority(b.type));
