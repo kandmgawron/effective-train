@@ -15,9 +15,9 @@ type Result = {
 
 /**
  * Get a realistic weight increment based on equipment type and current weight.
- * Dumbbells: +1kg up to 10kg, +2.5kg up to 25kg, +5kg above.
- * Machines: +5kg up to 30kg, +7.5kg above.
- * Barbell/cable/other: +2.5kg up to 60kg, +5kg above.
+ * Dumbbells: +1kg up to 10kg, +2kg up to 20kg, +2.5kg above.
+ * Machines/cables: +5kg flat.
+ * Barbell/other: +2.5kg up to 60kg, +5kg above.
  */
 export function getSmartIncrement(currentWeight: number, equipment: string): number {
   const w = Math.abs(currentWeight);
@@ -25,14 +25,13 @@ export function getSmartIncrement(currentWeight: number, equipment: string): num
 
   if (eq.includes('dumbbell')) {
     if (w < 10) return 1;
-    if (w < 25) return 2.5;
+    if (w < 20) return 2;
+    return 2.5;
+  }
+  if (eq.includes('machine') || eq.includes('cable') || eq.includes('leverage') || eq.includes('smith')) {
     return 5;
   }
-  if (eq.includes('machine') || eq.includes('leverage') || eq.includes('smith')) {
-    if (w < 30) return 5;
-    return 7.5;
-  }
-  // Barbell, cable, kettlebell, body weight, other
+  // Barbell, kettlebell, body weight, other
   if (w < 60) return 2.5;
   return 5;
 }
@@ -40,25 +39,6 @@ export function getSmartIncrement(currentWeight: number, equipment: string): num
 /** Round to nearest 0.5kg */
 export function roundWeight(w: number): number {
   return Math.round(w * 2) / 2;
-}
-
-/**
- * Calculate the rep target after a weight increase.
- * When weight goes up, reps should drop meaningfully:
- * - 12+ reps → drop to 8
- * - 10-11 reps → drop to 7
- * - 8-9 reps → drop to 6
- * - 6-7 reps → drop to 5
- * - 4-5 reps → drop to 3
- * - 1-3 reps → stay the same
- */
-export function getRepDropTarget(currentTargetReps: number): number {
-  if (currentTargetReps >= 12) return 8;
-  if (currentTargetReps >= 10) return 7;
-  if (currentTargetReps >= 8) return 6;
-  if (currentTargetReps >= 6) return 5;
-  if (currentTargetReps >= 4) return 3;
-  return currentTargetReps;
 }
 
 /** Suffix for messages reminding user about gym-specific weights */
@@ -73,7 +53,9 @@ export function evaluateProgression(
   config: ExerciseProgressionConfig
 ): Result {
   const recentSessions = getRecentSessions(exerciseId, 10);
-  if (recentSessions.length === 0) return null;
+
+  // Require at least 2 sessions before generating any recommendation
+  if (recentSessions.length < 2) return null;
 
   // Look up equipment for smart increment
   const exRow = db.getFirstSync<{ equipment: string }>(
@@ -92,7 +74,7 @@ export function evaluateProgression(
 
   // Default: reps-based progression
   const latestWeight = recentSessions[0].sets[0]?.weight ?? 0;
-  const stagnationThreshold = config.sensitivity === 'aggressive' ? 2 : config.sensitivity === 'moderate' ? 3 : 5;
+  const stagnationThreshold = config.sensitivity === 'aggressive' ? 3 : config.sensitivity === 'moderate' ? 4 : 5;
 
   if (config.progressionRule === 'double_progression') {
     return evaluateDoubleProgression(recentSessions, config, latestWeight, stagnationThreshold, equipment);
@@ -126,20 +108,24 @@ function evaluateWeightOnly(
     return { type: 'PROGRESS_WEIGHT', message: label, suggestedWeight: newWeight };
   }
 
-  const stagnationThreshold = config.sensitivity === 'aggressive' ? 2 : config.sensitivity === 'moderate' ? 3 : 5;
-  const failCount = sessions.slice(0, stagnationThreshold).filter(s =>
-    s.sets.some(set => set.reps < targetReps)
-  ).length;
+  // Deload: no progress for 3 sessions
+  if (sessions.length >= 3) {
+    const last3 = sessions.slice(0, 3);
+    const weights = last3.map(s => s.sets[0]?.weight ?? 0);
+    const sameWeight = weights.every(w => w === weights[0]);
+    const maxRepsNewest = Math.max(...last3[0].sets.map(s => s.reps));
+    const maxRepsOldest = Math.max(...last3[2].sets.map(s => s.reps));
 
-  if (failCount >= stagnationThreshold) {
-    const isCounterweight = currentWeight < 0;
-    const deloadWeight = isCounterweight
-      ? roundWeight(currentWeight - increment)
-      : roundWeight(currentWeight - increment);
-    const label = isCounterweight
-      ? `Missed target for ${failCount} sessions. Increase assistance to ${Math.abs(deloadWeight)}kg.${CLOSEST_NOTE}`
-      : `Missed target for ${failCount} sessions. Deload to ${deloadWeight}kg.${CLOSEST_NOTE}`;
-    return { type: 'DELOAD', message: label, suggestedWeight: deloadWeight };
+    if (sameWeight && maxRepsNewest <= maxRepsOldest) {
+      const isCounterweight = currentWeight < 0;
+      const deloadWeight = isCounterweight
+        ? roundWeight(currentWeight - increment)
+        : roundWeight(currentWeight - increment);
+      const label = isCounterweight
+        ? `No progress for 3 sessions. Increase assistance to ${Math.abs(deloadWeight)}kg.${CLOSEST_NOTE}`
+        : `No progress for 3 sessions. Deload to ${deloadWeight}kg.${CLOSEST_NOTE}`;
+      return { type: 'DELOAD', message: label, suggestedWeight: deloadWeight };
+    }
   }
 
   return {
@@ -196,6 +182,15 @@ function evaluateTimeBased(
   };
 }
 
+/**
+ * Double progression: increase reps within range, then increase weight and reset to repRangeMin.
+ *
+ * Rules:
+ * 1. PROGRESS_WEIGHT: ≥ 2/3 of sets hit repRangeMax → increase weight, drop reps to repRangeMin
+ * 2. DELOAD: same weight for 3 sessions AND max reps in newest ≤ max reps in oldest → drop weight, set reps to max
+ * 3. CHANGE_EXERCISE: no progress for stagnationThreshold sessions (weight AND max reps identical)
+ * 4. PROGRESS_REPS: only if reps are stagnant for 2+ sessions (not trending up already)
+ */
 function evaluateDoubleProgression(
   sessions: SessionData[],
   config: ExerciseProgressionConfig,
@@ -206,35 +201,33 @@ function evaluateDoubleProgression(
   const latest = sessions[0];
   const increment = getSmartIncrement(currentWeight, equipment);
 
-  const allHitMax = latest.sets.every(s => s.reps >= config.repRangeMax);
-  if (allHitMax) {
+  // 1. Weight increase: ≥ 2/3 of sets hit repRangeMax
+  const setsHittingMax = latest.sets.filter(s => s.reps >= config.repRangeMax).length;
+  const threshold = Math.ceil(latest.sets.length * 2 / 3);
+
+  if (setsHittingMax >= threshold) {
     const isCounterweight = currentWeight < 0;
     const newWeight = roundWeight(currentWeight + increment);
-    const dropReps = getRepDropTarget(config.repRangeMax);
     const label = isCounterweight
-      ? `All sets hit ${config.repRangeMax} reps. Reduce assistance to ${Math.abs(newWeight)}kg.${CLOSEST_NOTE}`
-      : `All sets hit ${config.repRangeMax} reps. Increase to ${newWeight}kg and aim for ${dropReps} reps.${CLOSEST_NOTE}`;
+      ? `${setsHittingMax}/${latest.sets.length} sets hit ${config.repRangeMax} reps. Reduce assistance to ${Math.abs(newWeight)}kg and aim for ${config.repRangeMin} reps.${CLOSEST_NOTE}`
+      : `${setsHittingMax}/${latest.sets.length} sets hit ${config.repRangeMax} reps. Increase to ${newWeight}kg and aim for ${config.repRangeMin} reps.${CLOSEST_NOTE}`;
     return {
       type: 'PROGRESS_WEIGHT',
       message: label,
       suggestedWeight: newWeight,
-      suggestedReps: dropReps,
+      suggestedReps: config.repRangeMin,
     };
   }
 
-  // Deload: triggered when there's no progress for 3 successive workouts.
-  // "No progress" = same weight AND average reps not improving (same or fewer).
+  // 2. Deload: same weight for 3 sessions AND max reps not improving
   if (sessions.length >= 3) {
     const last3 = sessions.slice(0, 3);
     const weights = last3.map(s => s.sets[0]?.weight ?? 0);
-    const avgRepsPerSession = last3.map(s =>
-      s.sets.length > 0 ? s.sets.reduce((sum, set) => sum + set.reps, 0) / s.sets.length : 0
-    );
     const sameWeight = weights.every(w => w === weights[0]);
-    // No progress = avg reps not increasing across the 3 sessions (newest to oldest)
-    const noRepsProgress = avgRepsPerSession[0] <= avgRepsPerSession[2];
+    const maxRepsNewest = Math.max(...last3[0].sets.map(s => s.reps));
+    const maxRepsOldest = Math.max(...last3[2].sets.map(s => s.reps));
 
-    if (sameWeight && noRepsProgress) {
+    if (sameWeight && maxRepsNewest <= maxRepsOldest) {
       const isCounterweight = currentWeight < 0;
       const deloadWeight = isCounterweight
         ? roundWeight(currentWeight - increment)
@@ -246,9 +239,11 @@ function evaluateDoubleProgression(
     }
   }
 
-  if (sessions.length >= stagnationThreshold && stagnationThreshold > 3) {
-    const recentWeights = sessions.slice(0, stagnationThreshold).map(s => s.sets[0]?.weight);
-    const recentMaxReps = sessions.slice(0, stagnationThreshold).map(s => Math.max(...s.sets.map(set => set.reps)));
+  // 3. Change exercise: no progress at all for stagnationThreshold sessions
+  if (sessions.length >= stagnationThreshold) {
+    const recent = sessions.slice(0, stagnationThreshold);
+    const recentWeights = recent.map(s => s.sets[0]?.weight ?? 0);
+    const recentMaxReps = recent.map(s => Math.max(...s.sets.map(set => set.reps)));
     const noProgress = recentWeights.every(w => w === recentWeights[0]) && recentMaxReps.every(r => r === recentMaxReps[0]);
 
     if (noProgress) {
@@ -259,14 +254,32 @@ function evaluateDoubleProgression(
     }
   }
 
-  const avgReps = Math.round(latest.sets.reduce((sum, s) => sum + s.reps, 0) / latest.sets.length);
+  // 4. Progress reps: only suggest if reps are stagnant (not already trending up)
+  const avgRepsLatest = latest.sets.reduce((sum, s) => sum + s.reps, 0) / latest.sets.length;
+  const avgRepsPrev = sessions[1].sets.reduce((sum, s) => sum + s.reps, 0) / sessions[1].sets.length;
+
+  // If reps are already trending up, no recommendation needed — user is progressing
+  if (avgRepsLatest > avgRepsPrev) {
+    return null;
+  }
+
+  // Reps are stagnant or declining — suggest aiming higher
+  const targetReps = Math.min(Math.round(avgRepsLatest) + 1, config.repRangeMax);
   return {
     type: 'PROGRESS_REPS',
-    message: `Keep at ${currentWeight}kg and aim for ${Math.min(avgReps + 1, config.repRangeMax)} reps per set.`,
-    suggestedReps: Math.min(avgReps + 1, config.repRangeMax),
+    message: `Keep at ${currentWeight}kg and aim for ${targetReps} reps per set.`,
+    suggestedReps: targetReps,
   };
 }
 
+/**
+ * Linear progression: hit target reps → increase weight.
+ *
+ * Rules:
+ * 1. PROGRESS_WEIGHT: all sets hit repRangeMin → increase weight, drop reps to repRangeMin (reset)
+ * 2. DELOAD: same weight for 3 sessions AND max reps not improving
+ * 3. PROGRESS_REPS: only if stagnant
+ */
 function evaluateLinearProgression(
   sessions: SessionData[],
   config: ExerciseProgressionConfig,
@@ -281,24 +294,21 @@ function evaluateLinearProgression(
   if (allHitTarget) {
     const isCounterweight = currentWeight < 0;
     const newWeight = roundWeight(currentWeight + increment);
-    const dropReps = getRepDropTarget(config.repRangeMin);
     const label = isCounterweight
       ? `Hit target reps. Reduce assistance to ${Math.abs(newWeight)}kg next session.${CLOSEST_NOTE}`
-      : `Hit target reps. Increase to ${newWeight}kg and aim for ${dropReps} reps.${CLOSEST_NOTE}`;
-    return { type: 'PROGRESS_WEIGHT', message: label, suggestedWeight: newWeight, suggestedReps: dropReps };
+      : `Hit target reps. Increase to ${newWeight}kg and aim for ${config.repRangeMin} reps.${CLOSEST_NOTE}`;
+    return { type: 'PROGRESS_WEIGHT', message: label, suggestedWeight: newWeight, suggestedReps: config.repRangeMin };
   }
 
-  // Deload: no progress for 3 successive workouts at same weight
+  // Deload: same weight for 3 sessions AND max reps not improving
   if (sessions.length >= 3) {
     const last3 = sessions.slice(0, 3);
     const weights = last3.map(s => s.sets[0]?.weight ?? 0);
-    const avgRepsPerSession = last3.map(s =>
-      s.sets.length > 0 ? s.sets.reduce((sum, set) => sum + set.reps, 0) / s.sets.length : 0
-    );
     const sameWeight = weights.every(w => w === weights[0]);
-    const noRepsProgress = avgRepsPerSession[0] <= avgRepsPerSession[2];
+    const maxRepsNewest = Math.max(...last3[0].sets.map(s => s.reps));
+    const maxRepsOldest = Math.max(...last3[2].sets.map(s => s.reps));
 
-    if (sameWeight && noRepsProgress) {
+    if (sameWeight && maxRepsNewest <= maxRepsOldest) {
       const isCounterweight = currentWeight < 0;
       const deloadWeight = isCounterweight
         ? roundWeight(currentWeight - increment)
@@ -308,6 +318,14 @@ function evaluateLinearProgression(
         : `No progress for 3 sessions at ${currentWeight}kg. Deload to ${deloadWeight}kg and aim for ${config.repRangeMax} reps.${CLOSEST_NOTE}`;
       return { type: 'DELOAD', message: label, suggestedWeight: deloadWeight, suggestedReps: config.repRangeMax };
     }
+  }
+
+  // Progress reps: only if stagnant
+  const avgRepsLatest = latest.sets.reduce((sum, s) => sum + s.reps, 0) / latest.sets.length;
+  const avgRepsPrev = sessions[1].sets.reduce((sum, s) => sum + s.reps, 0) / sessions[1].sets.length;
+
+  if (avgRepsLatest > avgRepsPrev) {
+    return null; // Already progressing, no recommendation needed
   }
 
   return {
