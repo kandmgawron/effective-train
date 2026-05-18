@@ -6,7 +6,7 @@ import { Exercise, TemplateExercise } from '@/types';
 import Icon from '@/components/Icon';
 
 export default function EditTemplate() {
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [templateName, setTemplateName] = useState('');
   const [exercises, setExercises] = useState<Exercise[]>([]);
