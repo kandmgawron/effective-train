@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import * as Haptics from 'expo-haptics';
 
 interface SetTimerProps {
   duration: number;
@@ -10,6 +11,7 @@ export default function SetTimer({ duration, onComplete }: SetTimerProps) {
   const [timeLeft, setTimeLeft] = useState(duration);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endTimeRef = useRef(Date.now() + duration * 1000);
+  const flashOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     endTimeRef.current = Date.now() + duration * 1000;
@@ -20,7 +22,12 @@ export default function SetTimer({ duration, onComplete }: SetTimerProps) {
       setTimeLeft(remaining);
       if (remaining <= 0) {
         if (intervalRef.current) clearInterval(intervalRef.current);
-        onComplete();
+        // ponytail: haptics + flash instead of audio dep
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Animated.sequence([
+          Animated.timing(flashOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
+          Animated.timing(flashOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+        ]).start(() => onComplete());
       }
     }, 100);
 
@@ -35,6 +42,7 @@ export default function SetTimer({ duration, onComplete }: SetTimerProps) {
 
   return (
     <View style={styles.container}>
+      <Animated.View style={[styles.flash, { opacity: flashOpacity }]} pointerEvents="none" />
       <View style={styles.inner}>
         <View style={styles.progressBar}>
           <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
@@ -57,6 +65,12 @@ const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  flash: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#fff',
+    zIndex: 10,
+    borderRadius: 12,
   },
   inner: {
     backgroundColor: '#1E3A8A',

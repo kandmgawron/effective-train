@@ -93,7 +93,14 @@ export default function WorkoutHistory() {
   };
 
   const updateEditSet = (idx: number, field: 'reps' | 'weight', value: string) => {
-    setEditSets(prev => prev.map((s, i) => i === idx ? { ...s, [field]: field === 'reps' ? (parseInt(value) || 0) : (parseFloat(value) || 0) } : s));
+    if (field === 'weight') {
+      // Allow intermediate states like "-" or "1." while typing
+      const parsed = parseFloat(value);
+      const numVal = (value === '-' || value === '' || value.endsWith('.')) ? value : (isNaN(parsed) ? 0 : parsed);
+      setEditSets(prev => prev.map((s, i) => i === idx ? { ...s, weight: numVal as any } : s));
+    } else {
+      setEditSets(prev => prev.map((s, i) => i === idx ? { ...s, reps: parseInt(value) || 0 } : s));
+    }
   };
 
   const saveEdits = () => {
@@ -263,7 +270,7 @@ export default function WorkoutHistory() {
                             style={styles.editInput}
                             value={String(s.weight)}
                             onChangeText={v => updateEditSet(s.flatIdx, 'weight', v)}
-                            keyboardType="decimal-pad"
+                            keyboardType="numbers-and-punctuation"
                           />
                         </>
                       ) : (
