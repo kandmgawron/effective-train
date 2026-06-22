@@ -35,6 +35,7 @@ export default function LogWorkout() {
   const [hideCompleted, setHideCompleted] = useState(false);
   const [showTimer, setShowTimer] = useState(false);
   const [timerDuration, setTimerDuration] = useState(90);
+  const [timerAfterExercise, setTimerAfterExercise] = useState<number>(-1);
   // swap state
   const [swapExerciseIndex, setSwapExerciseIndex] = useState<number | null>(null);
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
@@ -540,6 +541,7 @@ export default function LogWorkout() {
         }
         if (!skipTimer) {
           setTimerDuration(exercise.restTime);
+          setTimerAfterExercise(set.exerciseIndex);
           setShowTimer(true);
         }
       }
@@ -822,6 +824,10 @@ export default function LogWorkout() {
             <TouchableOpacity style={styles.menuItem} onPress={() => { unlinkSuperset(exercises.indexOf(exercise)); setExpandedMenu(prev => ({ ...prev, [exercise.order]: false })); }}>
               <Text style={styles.menuItemText}>Remove from Superset</Text>
             </TouchableOpacity>
+          ) : exercises.indexOf(exercise) < exercises.length - 1 ? (
+            <TouchableOpacity style={styles.menuItem} onPress={() => { linkSuperset(exercises.indexOf(exercise)); setExpandedMenu(prev => ({ ...prev, [exercise.order]: false })); }}>
+              <Text style={styles.menuItemText}>Link as Superset</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
       )}
@@ -1008,9 +1014,7 @@ export default function LogWorkout() {
               </View>
             )}
 
-            {showTimer && (
-              <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
-            )}
+            {/* Timer now renders inline below the relevant exercise group */}
 
             <View style={styles.toggleRow}>
               <TouchableOpacity style={[styles.toggleButton, hideCompleted && styles.toggleActive]} onPress={() => setHideCompleted(!hideCompleted)}>
@@ -1056,7 +1060,8 @@ export default function LogWorkout() {
                   }));
 
                   return (
-                    <View key={`sg-${vg.supersetGroup}`} style={styles.supersetWrapper}>
+                    <View key={`sg-${vg.supersetGroup}`}>
+                    <View style={styles.supersetWrapper}>
                       <Text style={styles.supersetWrapperTitle}>Superset {vg.supersetGroup}</Text>
                       {/* Menu/notes/swap per exercise */}
                       {members.map(({ exercise }, mIdx) => (
@@ -1191,12 +1196,21 @@ export default function LogWorkout() {
                         ))}
                       </View>
                     </View>
+                    {showTimer && members.some(m => exercises.indexOf(m.exercise) === timerAfterExercise) && (
+                      <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
+                    )}
+                  </View>
                   );
                 }
                 const { exercise, sets: exSets } = vg.items[0];
                 return (
-                  <View key={`ex-${vIdx}`} style={styles.exerciseBlock}>
-                    {renderExerciseContent(exercise, exSets)}
+                  <View key={`ex-${vIdx}`}>
+                    <View style={styles.exerciseBlock}>
+                      {renderExerciseContent(exercise, exSets)}
+                    </View>
+                    {showTimer && timerAfterExercise === exercises.indexOf(exercise) && (
+                      <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
+                    )}
                   </View>
                 );
               });

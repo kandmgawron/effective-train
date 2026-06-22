@@ -15,6 +15,7 @@
     "expo-asset": "~55.0.8",
     "expo-constants": "~55.0.7",
     "expo-dev-client": "^55.0.18",
+    "expo-haptics": "~55.0.14",
     "expo-linking": "~55.0.7",
     "expo-router": "~55.0.5",
     "expo-sqlite": "~55.0.10",
