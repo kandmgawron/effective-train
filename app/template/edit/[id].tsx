@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, StyleSheet, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import db from '@/lib/database';
 import { Exercise, TemplateExercise } from '@/types';
@@ -8,11 +9,13 @@ import Icon from '@/components/Icon';
 export default function EditTemplate() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [templateName, setTemplateName] = useState('');
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [selectedExercises, setSelectedExercises] = useState<TemplateExercise[]>([]);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState('');
+  const [selectedBodyPart, setSelectedBodyPart] = useState('');
   const [editingExercise, setEditingExercise] = useState<TemplateExercise | null>(null);
   const [showSupersetPicker, setShowSupersetPicker] = useState(false);
   const [supersetSelection, setSupersetSelection] = useState<Set<number>>(new Set());
@@ -307,10 +310,10 @@ export default function EditTemplate() {
 
       {/* Exercise Picker Modal */}
       <Modal visible={showExercisePicker} animationType="slide">
-        <View style={styles.modalContainer}>
+        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Select Exercise</Text>
-            <TouchableOpacity onPress={() => { setShowExercisePicker(false); setExerciseSearch(''); }}>
+            <TouchableOpacity onPress={() => { setShowExercisePicker(false); setExerciseSearch(''); setSelectedBodyPart(''); }}>
               <Icon name="chevronLeft" size={28} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -323,10 +326,23 @@ export default function EditTemplate() {
               onChangeText={setExerciseSearch}
               autoFocus
             />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8, marginBottom: 8 }}>
+              <TouchableOpacity style={[styles.filterChip, !selectedBodyPart && styles.filterChipActive]} onPress={() => setSelectedBodyPart('')}>
+                <Text style={[styles.filterChipText, !selectedBodyPart && styles.filterChipTextActive]}>All</Text>
+              </TouchableOpacity>
+              {[...new Set(exercises.map(e => e.bodyPart))].sort().map(bp => (
+                <TouchableOpacity key={bp} style={[styles.filterChip, selectedBodyPart === bp && styles.filterChipActive]} onPress={() => setSelectedBodyPart(selectedBodyPart === bp ? '' : bp)}>
+                  <Text style={[styles.filterChipText, selectedBodyPart === bp && styles.filterChipTextActive]}>{bp}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
           <ScrollView style={styles.modalScroll}>
-            {exercises.filter(ex => !exerciseSearch || ex.name.toLowerCase().includes(exerciseSearch.toLowerCase()) || ex.bodyPart.toLowerCase().includes(exerciseSearch.toLowerCase())).map(ex => (
-              <TouchableOpacity key={ex.id} style={styles.exerciseOption} onPress={() => handleAddExercise(ex)}>
+            {exercises
+              .filter(ex => !exerciseSearch || ex.name.toLowerCase().includes(exerciseSearch.toLowerCase()) || ex.bodyPart.toLowerCase().includes(exerciseSearch.toLowerCase()))
+              .filter(ex => !selectedBodyPart || ex.bodyPart === selectedBodyPart)
+              .map(ex => (
+              <TouchableOpacity key={ex.id} style={styles.exerciseOption} onPress={() => { handleAddExercise(ex); setExerciseSearch(''); setSelectedBodyPart(''); }}>
                 <Text style={styles.exerciseOptionName}>{ex.name}</Text>
                 <Text style={styles.exerciseOptionMeta}>{ex.bodyPart} • {ex.equipment}</Text>
               </TouchableOpacity>
@@ -496,4 +512,8 @@ const styles = StyleSheet.create({
   supersetPickerCheckSelected: { color: '#F59E0B' },
   supersetPickerName: { color: '#fff', fontSize: 15 },
   supersetPickerInGroup: { color: '#F59E0B', fontSize: 11, marginTop: 2 },
+  filterChip: { backgroundColor: '#1F2937', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, marginRight: 8 },
+  filterChipActive: { backgroundColor: '#3B82F6' },
+  filterChipText: { color: '#9CA3AF', fontSize: 13, fontWeight: '600' },
+  filterChipTextActive: { color: '#fff' },
 });
