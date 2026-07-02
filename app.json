@@ -2,8 +2,9 @@
   "expo": {
     "name": "Gym Tracker",
     "slug": "gym-tracker",
-    "version": "1.0.0",
+    "version": "1.5.1",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
       "resizeMode": "contain",
@@ -11,7 +12,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.gymtracker.app"
+      "bundleIdentifier": "com.gymtrackeradv.app",
+      "buildNumber": "7",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
