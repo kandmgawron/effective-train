@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, LayoutChangeEvent, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { format } from 'date-fns';
 import db from '@/lib/database';
 import { ProgressionRecommendation } from '@/types';
 import Icon from '@/components/Icon';
@@ -206,10 +205,9 @@ export default function Insights() {
     }
   };
 
-  const applyRecommendation = (id: number) => {
+  const applyRecommendation = (id: number, silent = false) => {
     const rec = recommendations.find(r => r.id === id);
     if (!rec) return;
-    const today = format(new Date(), 'yyyy-MM-dd');
 
     if (rec.type === 'PROGRESS_WEIGHT' || rec.type === 'DELOAD') {
       if (rec.suggestedReps != null) {
@@ -233,15 +231,11 @@ export default function Insights() {
       }
     }
 
-    const noteText = `[${today}] Applied: ${rec.message}`;
-    const existingNote = db.getFirstSync<{ value: string }>(
-      "SELECT value FROM user_settings WHERE key = ?",
-      [`exercise_note_${rec.exerciseId}`]
-    );
-    const newNote = existingNote ? `${existingNote.value}\n${noteText}` : noteText;
+    // Store a one-time note that shows during the next workout only
+    const noteText = `${rec.message}`;
     db.runSync(
       "INSERT OR REPLACE INTO user_settings (key, value) VALUES (?, ?)",
-      [`exercise_note_${rec.exerciseId}`, newNote]
+      [`exercise_note_${rec.exerciseId}`, noteText]
     );
 
     db.runSync(
@@ -251,10 +245,12 @@ export default function Insights() {
     );
     setRecommendations(prev => prev.filter(r => r.id !== id));
 
-    Alert.alert('Applied', rec.type === 'CHANGE_EXERCISE'
-      ? 'Noted. Swap the exercise manually in your next workout.'
-      : `Updated templates for ${rec.exerciseName}.`
-    );
+    if (!silent) {
+      Alert.alert('Applied', rec.type === 'CHANGE_EXERCISE'
+        ? 'Noted. Swap the exercise manually in your next workout.'
+        : `Updated: ${rec.exerciseName}.`
+      );
+    }
   };
 
   const dismissRecommendation = (id: number) => {
@@ -272,7 +268,7 @@ export default function Insights() {
   const applyAll = () => {
     const toApply = recommendations.filter(r => r.type !== 'CHANGE_EXERCISE');
     for (const rec of toApply) {
-      applyRecommendation(rec.id);
+      applyRecommendation(rec.id, true);
     }
     const skipped = recommendations.length - toApply.length;
     Alert.alert('Done', skipped > 0

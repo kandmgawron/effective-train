@@ -230,13 +230,15 @@ export default function LogWorkout() {
           showNotes: false,
         });
       }
-      // Clear the next_weight and next_reps after using them (one-time use)
+      // Clear the next_weight, next_reps, and exercise_note after using them (one-time use)
       if (nextWeight != null) {
         db.runSync("DELETE FROM user_settings WHERE key = ?", [`next_weight_${ex.exerciseId}`]);
       }
       if (nextReps != null) {
         db.runSync("DELETE FROM user_settings WHERE key = ?", [`next_reps_${ex.exerciseId}`]);
       }
+      // Clear the applied note so it doesn't show on subsequent workouts
+      db.runSync("DELETE FROM user_settings WHERE key = ?", [`exercise_note_${ex.exerciseId}`]);
     });
     return allSets;
   }, []);
