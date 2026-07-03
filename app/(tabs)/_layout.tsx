@@ -43,8 +43,8 @@ export default function TabLayout() {
             <View>
               <TabIcon color={workoutMode ? colors.warning : color} d="M12 5v14M5 12h14" />
               {workoutMode === 'active' && (
-                <View style={{ position: 'absolute', top: -4, right: -18, backgroundColor: colors.warning, borderRadius: 8, paddingHorizontal: 4, paddingVertical: 1 }}>
-                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>{formatElapsed(elapsedSeconds)}</Text>
+                <View style={{ position: 'absolute', top: -4, right: -18, backgroundColor: colors.warning, borderRadius: 8, paddingHorizontal: 4, paddingVertical: 1, minWidth: 32 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700', textAlign: 'center' }} numberOfLines={1}>{formatElapsed(elapsedSeconds)}</Text>
                 </View>
               )}
               {workoutMode === 'quick' && (

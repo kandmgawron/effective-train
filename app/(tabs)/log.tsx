@@ -541,7 +541,10 @@ export default function LogWorkout() {
         }
         if (!skipTimer) {
           setTimerDuration(exercise.restTime);
-          setTimerAfterExercise(set.exerciseIndex);
+          // Find which exercise the next pending set belongs to — timer shows above it
+          const updatedSetsForTimer = sets.map((s, i) => i === idx ? { ...s, status } : s);
+          const nextPendingSet = updatedSetsForTimer.find((s, i) => i > idx && s.status === 'pending');
+          setTimerAfterExercise(nextPendingSet ? nextPendingSet.exerciseIndex : set.exerciseIndex);
           setShowTimer(true);
         }
       }
@@ -1061,6 +1064,9 @@ export default function LogWorkout() {
 
                   return (
                     <View key={`sg-${vg.supersetGroup}`}>
+                    {showTimer && members.some(m => exercises.indexOf(m.exercise) === timerAfterExercise) && (
+                      <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
+                    )}
                     <View style={styles.supersetWrapper}>
                       <Text style={styles.supersetWrapperTitle}>Superset {vg.supersetGroup}</Text>
                       {/* Menu/notes/swap per exercise */}
@@ -1196,21 +1202,19 @@ export default function LogWorkout() {
                         ))}
                       </View>
                     </View>
-                    {showTimer && members.some(m => exercises.indexOf(m.exercise) === timerAfterExercise) && (
-                      <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
-                    )}
                   </View>
                   );
                 }
                 const { exercise, sets: exSets } = vg.items[0];
+                const exIdx = exercises.indexOf(exercise);
                 return (
                   <View key={`ex-${vIdx}`}>
+                    {showTimer && timerAfterExercise === exIdx && (
+                      <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
+                    )}
                     <View style={styles.exerciseBlock}>
                       {renderExerciseContent(exercise, exSets)}
                     </View>
-                    {showTimer && timerAfterExercise === exercises.indexOf(exercise) && (
-                      <SetTimer duration={timerDuration} onComplete={() => setShowTimer(false)} />
-                    )}
                   </View>
                 );
               });

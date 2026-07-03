@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Modal, Dimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface SetTimerProps {
   duration: number;
@@ -9,6 +11,7 @@ interface SetTimerProps {
 
 export default function SetTimer({ duration, onComplete }: SetTimerProps) {
   const [timeLeft, setTimeLeft] = useState(duration);
+  const [fullScreen, setFullScreen] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endTimeRef = useRef(Date.now() + duration * 1000);
   const flashOpacity = useRef(new Animated.Value(0)).current;
@@ -20,14 +23,25 @@ export default function SetTimer({ duration, onComplete }: SetTimerProps) {
     intervalRef.current = setInterval(() => {
       const remaining = Math.max(0, Math.ceil((endTimeRef.current - Date.now()) / 1000));
       setTimeLeft(remaining);
+
+      // Go full screen at 10 seconds
+      if (remaining <= 10 && remaining > 0 && !fullScreen) {
+        setFullScreen(true);
+      }
+
       if (remaining <= 0) {
         if (intervalRef.current) clearInterval(intervalRef.current);
-        // ponytail: haptics + flash instead of audio dep
+        // ponytail: haptics + flash for completion signal
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Animated.sequence([
-          Animated.timing(flashOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
+          Animated.timing(flashOpacity, { toValue: 1, duration: 80, useNativeDriver: true }),
+          Animated.timing(flashOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
+          Animated.timing(flashOpacity, { toValue: 1, duration: 80, useNativeDriver: true }),
           Animated.timing(flashOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
-        ]).start(() => onComplete());
+        ]).start(() => {
+          setFullScreen(false);
+          onComplete();
+        });
       }
     }, 100);
 
@@ -36,13 +50,34 @@ export default function SetTimer({ duration, onComplete }: SetTimerProps) {
     };
   }, [duration]);
 
+  const handleSkip = () => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    setFullScreen(false);
+    onComplete();
+  };
+
   const minutes = Math.floor(timeLeft / 60);
   const seconds = timeLeft % 60;
   const progress = duration > 0 ? timeLeft / duration : 0;
 
+  // Full screen countdown for last 10 seconds
+  if (fullScreen) {
+    return (
+      <Modal visible transparent animationType="fade" statusBarTranslucent>
+        <View style={styles.fullScreenContainer}>
+          <Animated.View style={[styles.fullScreenFlash, { opacity: flashOpacity }]} pointerEvents="none" />
+          <Text style={styles.fullScreenTime}>{timeLeft}</Text>
+          <Text style={styles.fullScreenLabel}>seconds</Text>
+          <TouchableOpacity style={styles.fullScreenSkip} onPress={handleSkip}>
+            <Text style={styles.fullScreenSkipText}>Skip</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.flash, { opacity: flashOpacity }]} pointerEvents="none" />
       <View style={styles.inner}>
         <View style={styles.progressBar}>
           <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
@@ -52,7 +87,7 @@ export default function SetTimer({ duration, onComplete }: SetTimerProps) {
           <Text style={styles.timer}>
             {minutes}:{seconds.toString().padStart(2, '0')}
           </Text>
-          <TouchableOpacity style={styles.skipBtn} onPress={onComplete}>
+          <TouchableOpacity style={styles.skipBtn} onPress={handleSkip}>
             <Text style={styles.skipText}>Skip</Text>
           </TouchableOpacity>
         </View>
@@ -65,12 +100,6 @@ const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-  },
-  flash: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#fff',
-    zIndex: 10,
-    borderRadius: 12,
   },
   inner: {
     backgroundColor: '#1E3A8A',
@@ -113,5 +142,40 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: '#111827',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullScreenFlash: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#fff',
+    zIndex: 10,
+  },
+  fullScreenTime: {
+    color: '#fff',
+    fontSize: 120,
+    fontWeight: 'bold',
+    fontVariant: ['tabular-nums'],
+  },
+  fullScreenLabel: {
+    color: '#9CA3AF',
+    fontSize: 20,
+    marginTop: 8,
+  },
+  fullScreenSkip: {
+    position: 'absolute',
+    bottom: 80,
+    backgroundColor: '#3B82F6',
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  fullScreenSkipText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
   },
 });
